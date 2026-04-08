@@ -233,7 +233,7 @@ export default function App() {
           <span style={{ fontWeight: 900, background: 'linear-gradient(135deg, #7c3aed, #2563eb)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Δ</span>Engram
         </h1>
         <p style={{ fontSize: '22px', fontWeight: 500, color: '#334155', margin: '0 0 20px', letterSpacing: '-0.01em', lineHeight: 1.3 }}>
-          A deterministic reasoning kernel — symbolic AI, a finite state machine, with configurable boundaries and fluid internals.
+          A deterministic reasoning kernel — symbolic AI, a finite state machine, with configurable boundaries and self-improving weights.
         </p>
         <p style={{ fontSize: '16px', color: '#64748b', margin: '0 0 16px', lineHeight: 1.65 }}>
           Given a context, Engram navigates a directed graph of concepts, fetches relevant context
