@@ -110,6 +110,7 @@ const PHASES = [
   { n: 12, label: 'Bias tuning and exploration noise',                         done: false },
   { n: 13, label: 'BM25 retrieval, n-grams, session context carry-forward, composite answers', done: false },
   { n: 14, label: 'Connectome Inspector — visual graph explorer',              done: false },
+  { n: 15, label: 'Storage backend abstraction — file, database, REST API, socket', done: false },
 ]
 
 const SIM_INFO: Record<TabId, { body: string }> = {
@@ -419,7 +420,7 @@ export default function App() {
         </div>
 
         {/* Unified content area */}
-        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+        <div style={{ background: '#fff', border: '2px solid #fed7aa', borderRadius: '12px', overflow: 'hidden' }}>
           <div style={{ padding: '28px 32px', borderBottom: '1px solid #f1f5f9' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
               <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>
