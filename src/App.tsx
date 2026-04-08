@@ -1,18 +1,20 @@
-import { useState, useRef } from 'react'
+import { useState } from 'react'
 import LLMCostFilter from './simulations/LLMCostFilter'
 import PrivacyByArchitecture from './simulations/PrivacyByArchitecture'
 import MCPAgentMemory from './simulations/MCPAgentMemory'
 import GraphLearns from './simulations/GraphLearns'
+import LLMToolGateway from './simulations/LLMToolGateway'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type TabId = 'llm-cost' | 'privacy' | 'mcp' | 'learning'
+type TabId = 'llm-cost' | 'privacy' | 'mcp' | 'learning' | 'gateway'
 
 const TABS: { id: TabId; label: string; tagline: string }[] = [
   { id: 'llm-cost', label: 'LLM Cost Filter',        tagline: 'Handle the majority of queries without touching the API.' },
   { id: 'privacy',  label: 'Privacy by Architecture', tagline: 'The attribution is structurally absent — not scrubbed, never recorded.' },
   { id: 'mcp',      label: 'MCP Agent Memory',        tagline: 'Give your LLM agent a persistent, self-improving knowledge base.' },
   { id: 'learning', label: 'Graph Learns',            tagline: 'Every session makes the next one cheaper. No retraining required.' },
+  { id: 'gateway',  label: 'LLM Tool Gateway',        tagline: 'The LLM can only do what the contract allows. Not a guardrail — a wall.' },
 ]
 
 // ── Content ───────────────────────────────────────────────────────────────────
@@ -36,7 +38,7 @@ const WHAT_ENGRAM_IS = [
   {
     requirement: 'Improves from session feedback without retraining',
     llm: 'No — requires new fine-tune',
-    engram: 'Yes — edge weights update in real time',
+    engram: 'Configurable — locked for frozen inference, or real-time edge weight updates when open',
   },
   {
     requirement: 'Stores patterns, never raw content',
@@ -69,7 +71,7 @@ const FEATURES = [
   {
     icon: '↑',
     title: 'Incremental learning',
-    desc: 'Session feedback updates edge weights in real time. No retraining cycle, no labelled dataset.',
+    desc: 'Edge weights update in real time via a Rescorla-Wagner-inspired rule. No retraining cycle, no labelled dataset.',
   },
   {
     icon: '🔒',
@@ -89,7 +91,7 @@ const FEATURES = [
   {
     icon: '→',
     title: 'Escalation-ready',
-    desc: 'Structured handoff payload exported when confidence falls below threshold. The LLM sees context, not conversation.',
+    desc: 'When a path terminates at an escalation node, a structured handoff payload is exported — goal node, attempted paths, confirmed facts, missing parameters. The LLM sees context, not conversation.',
   },
 ]
 
@@ -109,6 +111,24 @@ const PHASES = [
   { n: 13, label: 'BM25 retrieval, n-grams, session context carry-forward, composite answers', done: false },
   { n: 14, label: 'Connectome Inspector — visual graph explorer',              done: false },
 ]
+
+const SIM_INFO: Record<TabId, { body: string }> = {
+  'llm-cost': {
+    body: 'Routes every query through the graph first. Common patterns resolve locally without an API call. Only when confidence falls below threshold does the system escalate to the LLM — carrying a structured context payload, not a raw conversation thread. In bounded domains, the majority of queries never touch the API.',
+  },
+  'privacy': {
+    body: 'Input is tokenised at ingestion and the raw text is discarded immediately. What persists downstream is only graph node IDs. Privacy is structural — there is nothing to scrub because the attributable form never existed past the tokeniser. No policy enforcement, no audit scrub pipeline required.',
+  },
+  'mcp': {
+    body: 'The LLM drives the interaction and calls Engram as a tool mid-reasoning — querying the graph for confirmed knowledge, retrieving structured paths with confidence scores and ruled-out candidates. Confirmed answers feed back via engram.confirm(), reinforcing the graph. Over time, queries that initially required model reasoning resolve from Engram alone.',
+  },
+  'learning': {
+    body: 'After each confirmed session, edge weights update in real time via a Rescorla-Wagner-inspired learning rule. The most reliable paths strengthen; weak paths fade. No labelled dataset, no retraining cycle, no deployment window. Every session makes the next one cheaper and more confident.',
+  },
+  'gateway': {
+    body: 'When an LLM calls Engram via MCP, the only operations available are those explicitly enumerated in the action contract. Permissions, rate limits, and confirmation requirements are declared in a policy file and enforced before any execution layer call. The LLM cannot trigger an action outside the contract — not because a prompt says so, but because the execution pathway does not exist. Every call is evaluated, every block is logged, and the policy file is the complete audit surface.',
+  },
+}
 
 // ── Small components ──────────────────────────────────────────────────────────
 
@@ -139,20 +159,9 @@ function Tag({ label, color, bg }: { label: string; color: string; bg: string })
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [tab, setTab]           = useState<TabId>('llm-cost')
-  const [displayTab, setDisplayTab] = useState<TabId>('llm-cost')
-  const [opacity, setOpacity]   = useState(1)
-  const fadeTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  function switchTab(id: TabId) {
-    if (id === tab) return
-    if (fadeTimer.current) clearTimeout(fadeTimer.current)
-    setOpacity(0)
-    setTab(id)
-    fadeTimer.current = setTimeout(() => { setDisplayTab(id); setOpacity(1) }, 200)
-  }
-
-  const currentTab = TABS.find(t => t.id === tab)!
+  const [simView, setSimView]     = useState<TabId>('llm-cost')
+  const [simKey, setSimKey]       = useState(0)
+  const [selectedPhase, setSelectedPhase] = useState(() => PHASES.find(p => !p.done)?.n ?? 1)
 
   return (
     <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' }}>
@@ -160,13 +169,13 @@ export default function App() {
       {/* ── Sticky header ── */}
       <header style={{
         position: 'sticky', top: 0, zIndex: 20,
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        padding: '0 32px', height: '52px',
         background: 'rgba(255,255,255,0.92)', backdropFilter: 'blur(8px)',
-        borderBottom: '1px solid #e2e8f0',
+        borderBottom: '1px solid #e2e8f0', boxShadow: '0 4px 24px 0 rgba(15,23,42,0.12)',
       }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 32px', height: '52px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <span style={{ fontSize: '15px', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '15px', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.02em' }}>
+            <span style={{ fontSize: '17px', color: '#2563eb', fontWeight: 800, lineHeight: 1 }}>Δ</span>
             Engram
           </span>
           <span style={{
@@ -178,11 +187,11 @@ export default function App() {
           </span>
         </div>
         <nav style={{ display: 'flex', gap: '24px', alignItems: 'center' }}>
-          <a href="#simulations" style={{ fontSize: '13px', color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>
-            Demos
-          </a>
           <a href="#deployment" style={{ fontSize: '13px', color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>
             Deployment
+          </a>
+          <a href="#simulations" style={{ fontSize: '13px', color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>
+            Demos
           </a>
           <a href="#features" style={{ fontSize: '13px', color: '#64748b', textDecoration: 'none', fontWeight: 500 }}>
             Features
@@ -206,66 +215,67 @@ export default function App() {
             Docs
           </a>
         </nav>
+        </div>
       </header>
 
+      <main style={{ maxWidth: '1200px', margin: '0 auto' }}>
+
       {/* ── Hero ── */}
-      <section style={{ maxWidth: '860px', margin: '0 auto', padding: '72px 32px 56px' }}>
+      <section style={{ padding: '72px 32px 56px' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '20px' }}>
           <Tag label="Phase 1 complete" color="#16a34a" bg="#f0fdf4" />
           <Tag label="Rust" color="#ea580c" bg="#fff7ed" />
           <Tag label="Apache 2.0" color="#0369a1" bg="#f0f9ff" />
         </div>
 
-        <h1 style={{ fontSize: '52px', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.03em', margin: '0 0 12px', lineHeight: 1.05 }}>
-          Engram
+        <h1 style={{ fontSize: '52px', fontWeight: 700, color: '#0f172a', letterSpacing: '-0.03em', margin: '0 0 12px', lineHeight: 1.05, display: 'flex', alignItems: 'center', gap: '12px' }}>
+          <span style={{ fontWeight: 900, background: 'linear-gradient(135deg, #7c3aed, #2563eb)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Δ</span>Engram
         </h1>
         <p style={{ fontSize: '22px', fontWeight: 500, color: '#334155', margin: '0 0 20px', letterSpacing: '-0.01em', lineHeight: 1.3 }}>
-          A deterministic reasoning kernel — symbolic AI with configurable boundaries and fluid internals.
+          A deterministic reasoning kernel — symbolic AI, a finite state machine, with configurable boundaries and fluid internals.
         </p>
-        <p style={{ fontSize: '16px', color: '#64748b', margin: '0 0 16px', lineHeight: 1.65, maxWidth: '680px' }}>
-          Given a context, Engram navigates a directed graph of concepts, asks targeted{' '}
-          <strong style={{ color: '#334155' }}>breaking questions</strong> to resolve ambiguity, and emits
-          typed <strong style={{ color: '#334155' }}>action contracts</strong> that a separate execution layer runs.
+        <p style={{ fontSize: '16px', color: '#64748b', margin: '0 0 16px', lineHeight: 1.65 }}>
+          Given a context, Engram navigates a directed graph of concepts, fetches relevant context
+          through predefined hooks, and asks targeted{' '}
+          <strong style={{ color: '#334155' }}>breaking questions</strong> only when that context is still not enough —
+          resolving to a typed <strong style={{ color: '#334155' }}>action contract</strong> at the path terminus.
+          The graph holds the contract, a separate execution layer carries it out.
           Every path is auditable, every weight is named, and the system improves without retraining.
         </p>
-        <p style={{ fontSize: '16px', color: '#64748b', margin: 0, lineHeight: 1.65, maxWidth: '680px' }}>
-          The boundaries are independently configurable: context nodes and actions can be{' '}
-          <strong style={{ color: '#334155' }}>locked</strong> for fully frozen, auditable inference, or{' '}
-          <strong style={{ color: '#334155' }}>opened</strong> to allow runtime knowledge additions — letting an LLM
-          author nodes into the graph so that future similar queries resolve from the graph directly, without an API call.
-          Built for bounded, high-stakes domains where determinism and auditability matter:
-          LLM agent meshes, medical triage routing, CI/CD fault isolation, offline industrial agents.
+        <p style={{ fontSize: '16px', color: '#64748b', margin: 0, lineHeight: 1.65 }}>
+          Built for bounded domains where determinism, auditability, and cost control matter:
+          LLM agent cost optimisation, CI/CD fault isolation, on-call developer tooling, offline industrial agents.
         </p>
       </section>
 
       {/* ── What Engram is — comparison table ── */}
-      <section style={{ maxWidth: '860px', margin: '0 auto', padding: '0 32px 72px' }}>
+      <section style={{ padding: '0 32px 72px' }}>
         <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
           {/* Header row */}
           <div style={{
-            display: 'grid', gridTemplateColumns: '1fr 200px 200px',
+            display: 'grid', gridTemplateColumns: '1fr 280px 280px',
             padding: '9px 16px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0',
           }}>
             <span style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Requirement</span>
-            <span style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Small LLM / fine-tuned model</span>
             <span style={{ fontSize: '11px', fontWeight: 700, color: '#16a34a', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Engram</span>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.07em', textTransform: 'uppercase' }}>Small LLM / fine-tuned model</span>
           </div>
           {WHAT_ENGRAM_IS.map((row, i) => (
             <div key={row.requirement} style={{
-              display: 'grid', gridTemplateColumns: '1fr 200px 200px',
+              display: 'grid', gridTemplateColumns: '1fr 280px 280px',
               padding: '10px 16px', borderBottom: i < WHAT_ENGRAM_IS.length - 1 ? '1px solid #f1f5f9' : undefined,
               alignItems: 'start',
             }}>
               <span style={{ fontSize: '13px', color: '#0f172a', paddingRight: '16px' }}>{row.requirement}</span>
-              <span style={{ fontSize: '12px', color: '#94a3b8', paddingRight: '12px' }}>{row.llm}</span>
-              <span style={{ fontSize: '12px', color: '#15803d', fontWeight: 500 }}>{row.engram}</span>
+              <span style={{ fontSize: '12px', color: '#15803d', fontWeight: 500, paddingRight: '12px' }}>{row.engram}</span>
+              <span style={{ fontSize: '12px', color: '#94a3b8' }}>{row.llm}</span>
             </div>
           ))}
         </div>
       </section>
 
       {/* ── Deployment configuration ── */}
-      <section id="deployment" style={{ maxWidth: '860px', margin: '0 auto', padding: '0 32px 72px' }}>
+      <section id="deployment" style={{ padding: '0 32px 72px' }}>
         <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
           Deployment configuration
         </h2>
@@ -327,7 +337,7 @@ export default function App() {
         {/* Representative configurations table */}
         <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
           <div style={{
-            display: 'grid', gridTemplateColumns: '80px 80px 100px 100px 1fr',
+            display: 'grid', gridTemplateColumns: '110px 110px 130px 160px 1fr',
             padding: '8px 14px', background: '#f8fafc', borderBottom: '1px solid #e2e8f0',
           }}>
             {['Context', 'Actions', 'Graph', 'Input', 'Natural use case'].map(h => (
@@ -342,7 +352,7 @@ export default function App() {
             { ctx: 'Open',   act: 'Open',   graph: 'Learning',  input: 'Open',        use: 'Fully adaptive — LLM teaches graph at every layer; produces a shareable, versioned memory artifact' },
           ].map((row, i, arr) => (
             <div key={i} style={{
-              display: 'grid', gridTemplateColumns: '80px 80px 100px 100px 1fr',
+              display: 'grid', gridTemplateColumns: '110px 110px 130px 160px 1fr',
               padding: '9px 14px', borderBottom: i < arr.length - 1 ? '1px solid #f1f5f9' : undefined,
               alignItems: 'start',
               background: i === arr.length - 1 ? '#f0fdf408' : undefined,
@@ -367,7 +377,7 @@ export default function App() {
       </section>
 
       {/* ── Simulations ── */}
-      <section id="simulations" style={{ maxWidth: '1080px', margin: '0 auto', padding: '0 32px 72px' }}>
+      <section id="simulations" style={{ padding: '0 32px 72px' }}>
         <div style={{ marginBottom: '20px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
             <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
@@ -382,24 +392,24 @@ export default function App() {
             </span>
           </div>
           <p style={{ fontSize: '14px', color: '#64748b', margin: 0 }}>
-            These simulations show Engram's full design intent across four use cases. They are not a running implementation —
-            see the roadmap below for what is built. All demos auto-play and loop.
+            Four use cases that demonstrate Engram's core properties. Each shows a distinct aspect of the design —
+            select a use case to read about it, or view the animated simulations.
           </p>
         </div>
 
-        {/* Tab pills */}
-        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '12px' }}>
+        {/* Content switcher */}
+        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', marginBottom: '16px' }}>
           {TABS.map(t => (
             <button
               key={t.id}
-              onClick={() => switchTab(t.id)}
+              onClick={() => setSimView(t.id)}
               style={{
                 padding: '5px 14px', borderRadius: '20px',
-                fontSize: '13px', fontWeight: tab === t.id ? 600 : 500,
+                fontSize: '13px', fontWeight: simView === t.id ? 600 : 500,
                 cursor: 'pointer', fontFamily: 'inherit',
-                border: tab === t.id ? '1.5px solid #0f172a' : '1.5px solid #e2e8f0',
-                background: tab === t.id ? '#0f172a' : '#fff',
-                color: tab === t.id ? '#fff' : '#64748b',
+                border: simView === t.id ? '1.5px solid #0f172a' : '1.5px solid #e2e8f0',
+                background: simView === t.id ? '#0f172a' : '#fff',
+                color: simView === t.id ? '#fff' : '#64748b',
                 transition: 'all 0.15s ease',
               }}
             >
@@ -408,25 +418,45 @@ export default function App() {
           ))}
         </div>
 
-        {/* Simulation panel */}
-        <div style={{
-          height: '450px', opacity, transition: 'opacity 0.2s ease',
-          border: '1px solid #e2e8f0', borderRadius: '12px',
-          overflow: 'hidden', background: '#f8fafc',
-        }}>
-          {displayTab === 'llm-cost' && <LLMCostFilter />}
-          {displayTab === 'privacy'  && <PrivacyByArchitecture />}
-          {displayTab === 'mcp'      && <MCPAgentMemory />}
-          {displayTab === 'learning' && <GraphLearns />}
+        {/* Unified content area */}
+        <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '12px', overflow: 'hidden' }}>
+          <div style={{ padding: '28px 32px', borderBottom: '1px solid #f1f5f9' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>
+                {TABS.find(t => t.id === simView)!.label}
+              </div>
+              <button
+                onClick={() => setSimKey(k => k + 1)}
+                title="Restart simulation"
+                style={{
+                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                  fontSize: '11px', fontWeight: 600, fontFamily: 'inherit',
+                  color: '#64748b', background: '#f8fafc',
+                  border: '1px solid #e2e8f0', transition: 'all 0.15s ease',
+                }}
+              >
+                ↺ Restart
+              </button>
+            </div>
+            <p style={{ fontSize: '15px', fontWeight: 500, color: '#334155', margin: '0 0 12px', lineHeight: 1.5 }}>
+              {TABS.find(t => t.id === simView)!.tagline}
+            </p>
+            <p style={{ fontSize: '14px', color: '#64748b', margin: 0, lineHeight: 1.7 }}>
+              {SIM_INFO[simView].body}
+            </p>
+          </div>
+          <div key={`${simView}-${simKey}`} style={{ height: '800px', background: '#f8fafc' }}>
+            {simView === 'llm-cost' && <LLMCostFilter />}
+            {simView === 'privacy'  && <PrivacyByArchitecture />}
+            {simView === 'mcp'      && <MCPAgentMemory />}
+            {simView === 'learning' && <GraphLearns />}
+            {simView === 'gateway'  && <LLMToolGateway />}
+          </div>
         </div>
-
-        <p style={{ fontSize: '12px', color: '#94a3b8', margin: '8px 0 0', fontStyle: 'italic' }}>
-          {currentTab.tagline}
-        </p>
       </section>
 
       {/* ── Feature grid ── */}
-      <section id="features" style={{ maxWidth: '860px', margin: '0 auto', padding: '0 32px 72px' }}>
+      <section id="features" style={{ padding: '0 32px 72px' }}>
         <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
           Design principles
         </h2>
@@ -439,12 +469,12 @@ export default function App() {
       </section>
 
       {/* ── Prior art comparison ── */}
-      <section style={{ maxWidth: '860px', margin: '0 auto', padding: '0 32px 72px' }}>
+      <section style={{ padding: '0 32px 72px' }}>
         <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
           How it compares
         </h2>
         <p style={{ fontSize: '14px', color: '#64748b', margin: '0 0 20px' }}>
-          Several systems overlap with parts of Engram. None combine all four properties.
+          Several systems overlap with parts of Engram. None combine structured dialogue, structural privacy (no text stored at any layer), incremental weight learning without retraining, and a hard knowledge boundary as an architectural guarantee.
         </p>
         <div style={{ background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px', overflow: 'hidden' }}>
           {[
@@ -455,7 +485,7 @@ export default function App() {
             { system: 'Engram',                  shared: 'All of the above',                             missing: '—', highlight: true },
           ].map((row, i) => (
             <div key={row.system} style={{
-              display: 'grid', gridTemplateColumns: '180px 1fr 1fr',
+              display: 'grid', gridTemplateColumns: '220px 1fr 1fr',
               padding: '10px 16px', borderBottom: i < 4 ? '1px solid #f1f5f9' : undefined,
               background: row.highlight ? '#f0fdf4' : undefined,
               alignItems: 'start',
@@ -471,45 +501,89 @@ export default function App() {
       </section>
 
       {/* ── Status / Roadmap ── */}
-      <section style={{ maxWidth: '860px', margin: '0 auto', padding: '0 32px 72px' }}>
+      <section style={{ padding: '0 32px 72px' }}>
         <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
           Status
         </h2>
         <p style={{ fontSize: '14px', color: '#64748b', margin: '0 0 20px' }}>
           The Rust binary is the reference implementation. The knowledge file format (JSON) and the reasoning spec are language-agnostic.
         </p>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {PHASES.map(p => (
-            <div key={p.n} style={{
-              display: 'flex', alignItems: 'center', gap: '12px',
-              padding: '10px 14px', background: '#fff',
-              border: '1px solid #e2e8f0', borderRadius: '8px',
+        {/* Horizontal phase circles */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0', marginBottom: '12px', overflowX: 'auto' }}>
+          {PHASES.map((p, i) => {
+            const isDone     = p.done
+            const isSelected = p.n === selectedPhase
+            const isActive   = !isDone && p.n === PHASES.find(x => !x.done)?.n
+            return (
+              <div key={p.n} style={{ display: 'flex', alignItems: 'center', flexShrink: 0 }}>
+                {i > 0 && (
+                  <div style={{
+                    width: '18px', height: '2px', flexShrink: 0,
+                    background: PHASES[i - 1].done ? '#16a34a' : '#e2e8f0',
+                  }} />
+                )}
+                <button
+                  onClick={() => setSelectedPhase(p.n)}
+                  title={p.label}
+                  style={{
+                    width: '34px', height: '34px', borderRadius: '50%', flexShrink: 0,
+                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    fontSize: '11px', fontWeight: 700, cursor: 'pointer',
+                    fontFamily: 'inherit',
+                    background: isDone ? '#16a34a' : isActive ? '#f0f9ff' : '#f8fafc',
+                    color:      isDone ? '#fff'    : isActive ? '#0369a1' : '#94a3b8',
+                    border: isDone
+                      ? isSelected ? '3px solid #15803d' : '2px solid #16a34a'
+                      : isActive
+                        ? isSelected ? '3px solid #0369a1' : '2px solid #7dd3fc'
+                        : isSelected ? '3px solid #64748b' : '2px solid #e2e8f0',
+                    transition: 'all 0.15s ease',
+                    outline: 'none',
+                  }}
+                >
+                  {isDone ? '✓' : p.n}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* Selected phase info */}
+        {(() => {
+          const p = PHASES.find(x => x.n === selectedPhase)!
+          const isActive = !p.done && p.n === PHASES.find(x => !x.done)?.n
+          return (
+            <div style={{
+              background: '#fff', border: '1px solid #e2e8f0', borderRadius: '8px',
+              padding: '14px 18px', display: 'flex', alignItems: 'center', gap: '14px',
             }}>
               <div style={{
-                width: '28px', height: '28px', borderRadius: '50%', flexShrink: 0,
+                width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
                 display: 'flex', alignItems: 'center', justifyContent: 'center',
-                fontSize: '11px', fontWeight: 700,
-                background: p.done ? '#16a34a' : '#f1f5f9',
-                color: p.done ? '#fff' : '#94a3b8',
-                border: p.done ? '2px solid #16a34a' : '2px solid #e2e8f0',
+                fontSize: '12px', fontWeight: 700,
+                background: p.done ? '#16a34a' : isActive ? '#f0f9ff' : '#f8fafc',
+                color:      p.done ? '#fff'    : isActive ? '#0369a1' : '#94a3b8',
+                border:     p.done ? '2px solid #16a34a' : isActive ? '2px solid #7dd3fc' : '2px solid #e2e8f0',
               }}>
                 {p.done ? '✓' : p.n}
               </div>
-              <span style={{ fontSize: '13px', color: p.done ? '#15803d' : '#334155', fontWeight: p.done ? 500 : 400 }}>
-                {p.label}
-              </span>
-              {p.done && (
-                <span style={{
-                  marginLeft: 'auto', fontSize: '10px', fontWeight: 600, color: '#16a34a',
-                  background: '#f0fdf4', border: '1px solid #bbf7d0',
-                  borderRadius: '20px', padding: '2px 8px',
-                }}>
-                  complete
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ fontSize: '13px', color: p.done ? '#15803d' : '#334155', fontWeight: p.done ? 500 : 400 }}>
+                  {p.label}
                 </span>
-              )}
+              </div>
+              <span style={{
+                fontSize: '10px', fontWeight: 600, flexShrink: 0,
+                color:      p.done ? '#16a34a' : isActive ? '#0369a1' : '#94a3b8',
+                background: p.done ? '#f0fdf4' : isActive ? '#f0f9ff' : '#f8fafc',
+                border:     `1px solid ${p.done ? '#bbf7d0' : isActive ? '#bae6fd' : '#e2e8f0'}`,
+                borderRadius: '20px', padding: '2px 10px',
+              }}>
+                {p.done ? 'complete' : isActive ? 'in progress' : 'upcoming'}
+              </span>
             </div>
-          ))}
-        </div>
+          )
+        })()}
         <p style={{ fontSize: '13px', color: '#94a3b8', marginTop: '12px' }}>
           See{' '}
           <a href="https://github.com/dominikj111/Engram/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer" style={{ color: '#64748b' }}>
@@ -519,13 +593,13 @@ export default function App() {
         </p>
       </section>
 
+      </main>
+
       {/* ── Footer ── */}
-      <footer style={{
-        borderTop: '1px solid #e2e8f0', background: '#fff',
-        padding: '24px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-      }}>
+      <footer style={{ borderTop: '1px solid #e2e8f0', background: '#fff' }}>
+        <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '24px 32px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ fontSize: '13px', color: '#94a3b8' }}>
-          Engram — Apache 2.0
+          Δ Engram — Apache 2.0
         </div>
         <div style={{ display: 'flex', gap: '20px' }}>
           {[
@@ -533,16 +607,18 @@ export default function App() {
             { label: 'Docs', href: 'https://github.com/dominikj111/Engram/tree/main/docs' },
             { label: 'Roadmap', href: 'https://github.com/dominikj111/Engram/blob/main/docs/roadmap.md' },
             { label: 'Contributing', href: 'https://github.com/dominikj111/Engram/blob/main/CONTRIBUTING.md' },
+            { label: 'Get in touch ↗', href: 'https://www.linkedin.com/in/dominikj111' },
           ].map(link => (
             <a
               key={link.label}
               href={link.href}
               target="_blank" rel="noopener noreferrer"
-              style={{ fontSize: '13px', color: '#64748b', textDecoration: 'none' }}
+              style={{ fontSize: '13px', color: link.label === 'Get in touch ↗' ? '#0f172a' : '#64748b', textDecoration: 'none', fontWeight: link.label === 'Get in touch ↗' ? 600 : 400 }}
             >
               {link.label}
             </a>
           ))}
+        </div>
         </div>
       </footer>
     </div>
