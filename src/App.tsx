@@ -162,6 +162,7 @@ function Tag({ label, color, bg }: { label: string; color: string; bg: string })
 export default function App() {
   const [simView, setSimView]     = useState<TabId>('llm-cost')
   const [simKey, setSimKey]       = useState(0)
+  const [simPaused, setSimPaused] = useState(false)
   const [selectedPhase, setSelectedPhase] = useState(() => PHASES.find(p => !p.done)?.n ?? 1)
 
   return (
@@ -403,7 +404,7 @@ export default function App() {
           {TABS.map(t => (
             <button
               key={t.id}
-              onClick={() => setSimView(t.id)}
+              onClick={() => { setSimView(t.id); setSimPaused(false) }}
               style={{
                 padding: '5px 14px', borderRadius: '20px',
                 fontSize: '13px', fontWeight: simView === t.id ? 600 : 500,
@@ -426,18 +427,34 @@ export default function App() {
               <div style={{ fontSize: '11px', fontWeight: 700, color: '#94a3b8', letterSpacing: '0.06em', textTransform: 'uppercase' as const }}>
                 {TABS.find(t => t.id === simView)!.label}
               </div>
-              <button
-                onClick={() => setSimKey(k => k + 1)}
-                title="Restart simulation"
-                style={{
-                  padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
-                  fontSize: '11px', fontWeight: 600, fontFamily: 'inherit',
-                  color: '#64748b', background: '#f8fafc',
-                  border: '1px solid #e2e8f0', transition: 'all 0.15s ease',
-                }}
-              >
-                ↺ Restart
-              </button>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  onClick={() => { setSimPaused(p => !p) }}
+                  title={simPaused ? 'Resume simulation' : 'Pause simulation'}
+                  style={{
+                    padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                    fontSize: '11px', fontWeight: 600, fontFamily: 'inherit',
+                    color: simPaused ? '#2563eb' : '#64748b',
+                    background: simPaused ? '#eff6ff' : '#f8fafc',
+                    border: `1px solid ${simPaused ? '#bfdbfe' : '#e2e8f0'}`,
+                    transition: 'all 0.15s ease',
+                  }}
+                >
+                  {simPaused ? '▶ Resume' : '⏸ Pause'}
+                </button>
+                <button
+                  onClick={() => { setSimPaused(false); setSimKey(k => k + 1) }}
+                  title="Restart simulation"
+                  style={{
+                    padding: '4px 10px', borderRadius: '6px', cursor: 'pointer',
+                    fontSize: '11px', fontWeight: 600, fontFamily: 'inherit',
+                    color: '#64748b', background: '#f8fafc',
+                    border: '1px solid #e2e8f0', transition: 'all 0.15s ease',
+                  }}
+                >
+                  ↺ Restart
+                </button>
+              </div>
             </div>
             <p style={{ fontSize: '15px', fontWeight: 500, color: '#334155', margin: '0 0 12px', lineHeight: 1.5 }}>
               {TABS.find(t => t.id === simView)!.tagline}
@@ -446,12 +463,12 @@ export default function App() {
               {SIM_INFO[simView].body}
             </p>
           </div>
-          <div key={`${simView}-${simKey}`} style={{ height: '800px', background: '#f8fafc' }}>
+          <div key={`${simView}-${simKey}`} style={{ height: '1100px', background: '#f8fafc' }}>
             {simView === 'llm-cost' && <LLMCostFilter />}
             {simView === 'privacy'  && <PrivacyByArchitecture />}
             {simView === 'mcp'      && <MCPAgentMemory />}
             {simView === 'learning' && <GraphLearns />}
-            {simView === 'gateway'  && <LLMToolGateway />}
+            {simView === 'gateway'  && <LLMToolGateway paused={simPaused} />}
           </div>
         </div>
       </section>
