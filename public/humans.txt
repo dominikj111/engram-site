@@ -1,0 +1,14 @@
+/* TEAM */
+Developer: Dominik Jelinek
+Contact: https://www.linkedin.com/in/dominikj111
+GitHub: https://github.com/dominikj111
+
+/* PROJECT */
+Name: Engram
+Description: Deterministic reasoning kernel — symbolic AI, a finite state machine, with configurable boundaries and fluid internals
+Repository: https://github.com/dominikj111/Engram
+Site: https://dominikj111.github.io/engram/
+License: Apache 2.0
+
+/* TECHNOLOGY */
+React, TypeScript, Vite, Tailwind CSS
