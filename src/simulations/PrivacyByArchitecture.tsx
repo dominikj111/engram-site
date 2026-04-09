@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 // ── Data ──────────────────────────────────────────────────────────────────────
 
@@ -13,10 +13,15 @@ interface Session {
   w1: number
 }
 
+interface ConcernTag {
+  label: string
+  tone: 'danger' | 'warning'
+}
+
 const SESSIONS: Session[] = [
   {
     user: 'alice', email: 'alice@corp.com', time: '14:02',
-    text: 'auth service keeps returning 401 on staging',
+    text: 'auth service keeps returning 401 on staging (token tail ...7f3)',
     nodes: ['auth', '401', 'staging'],
     path: 'auth → 401 → check_token_expiry',
     w0: 0.82, w1: 0.84,
@@ -30,14 +35,14 @@ const SESSIONS: Session[] = [
   },
   {
     user: 'alice', email: 'alice@corp.com', time: '14:09',
-    text: 'I think it might be the token expiry config',
+    text: 'I deleted the last letters from password but it was Passw0... in config',
     nodes: ['token', 'expiry', 'config'],
     path: 'token → check_expiry_setting',
     w0: 0.65, w1: 0.68,
   },
   {
     user: 'carol', email: 'carol@corp.com', time: '14:15',
-    text: '401 on the webhook endpoint as well',
+    text: '401 on webhook too; debug log accidentally included Authorization=Bearer sk_live_51N...',
     nodes: ['auth', '401', 'webhook'],
     path: 'auth → 401 → check_token_expiry',
     w0: 0.84, w1: 0.87,
@@ -54,6 +59,30 @@ const SESSIONS: Session[] = [
 const SESSION_GAP    = 2600  // ms between sessions
 const RESET_PAUSE    = 5000  // ms before loop restarts
 
+function concernsForSession(session: Session): ConcernTag[] {
+  const tags: ConcernTag[] = []
+  const text = session.text.toLowerCase()
+  const addTag = (label: string, tone: ConcernTag['tone']) => {
+    if (!tags.some(t => t.label === label)) tags.push({ label, tone })
+  }
+
+  addTag('email', 'danger')
+  addTag('identity', 'warning')
+  addTag('raw text', 'warning')
+
+  const hasTokenSignal = /token|bearer|authorization|jwt|api[_ -]?key|secret/i.test(session.text)
+  const hasPasswordSignal = /password|passwd|pwd|passphrase/i.test(session.text)
+  const hasLogSignal = /debug|trace|log|stack/i.test(session.text)
+  const hasMaskingSignal = /\.\.\.|masked|redact|deleted the last|trimmed|tail/i.test(text)
+
+  if (hasTokenSignal) addTag('security token context', 'danger')
+  if (hasPasswordSignal) addTag('password fragment', 'danger')
+  if (hasLogSignal) addTag('accidental credential log', 'danger')
+  if (hasMaskingSignal && (hasTokenSignal || hasPasswordSignal)) addTag('guessable partial secret', 'warning')
+
+  return tags
+}
+
 // ── Engram entry (self-animating) ─────────────────────────────────────────────
 
 function EngramEntry({ session }: { session: Session }) {
@@ -63,8 +92,7 @@ function EngramEntry({ session }: { session: Session }) {
     const ts = [
       setTimeout(() => setPhase(1), 300),   // tokenise + nodes
       setTimeout(() => setPhase(2), 700),   // fade text
-      setTimeout(() => setPhase(3), 1000),  // "discarded"
-      setTimeout(() => setPhase(4), 1300),  // graph update
+      setTimeout(() => setPhase(3), 1300),  // graph update
     ]
     return () => ts.forEach(clearTimeout)
   }, [])
@@ -91,7 +119,7 @@ function EngramEntry({ session }: { session: Session }) {
             fontSize: '10px', color: '#94a3b8', marginBottom: '4px',
             fontFamily: 'ui-monospace, monospace',
           }}>
-            ↓ tokenise
+            ACTIVATED NODES
           </div>
           <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
             {session.nodes.map(n => (
@@ -108,18 +136,21 @@ function EngramEntry({ session }: { session: Session }) {
       )}
 
       {phase >= 3 && (
-        <div style={{
-          animation: 'rowIn 0.2s ease both', marginBottom: '4px',
-          fontSize: '10px', fontFamily: 'ui-monospace, monospace', color: '#94a3b8',
-        }}>
-          text discarded <span style={{ color: '#ef4444', fontWeight: 700 }}>✗</span>
-        </div>
-      )}
-
-      {phase >= 4 && (
         <div style={{ animation: 'rowIn 0.2s ease both' }}>
+          <div style={{
+            fontSize: '10px', color: '#94a3b8', marginBottom: '3px',
+            fontFamily: 'ui-monospace, monospace',
+          }}>
+            ACTIVATED PATH
+          </div>
           <span style={{ fontSize: '10px', fontFamily: 'ui-monospace, monospace', color: '#15803d' }}>
             {session.path}
+          </span>
+          <span style={{ fontSize: '10px', color: '#94a3b8', margin: '0 6px' }}>|</span>
+          <span style={{
+            fontSize: '10px', fontFamily: 'ui-monospace, monospace', color: '#94a3b8',
+          }}>
+            WEIGHT
           </span>
           <span style={{
             fontSize: '10px', fontFamily: 'ui-monospace, monospace',
@@ -133,9 +164,9 @@ function EngramEntry({ session }: { session: Session }) {
   )
 }
 
-// ── Left panel — Traditional ──────────────────────────────────────────────────
+// ── Unified cascade panel ─────────────────────────────────────────────────────
 
-function TraditionalPanel({
+function CascadePanel({
   sessions,
   showGdpr,
   showQuery,
@@ -152,32 +183,21 @@ function TraditionalPanel({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      {/* Panel title */}
       <div style={{
         display: 'flex', alignItems: 'center', gap: '8px',
         marginBottom: '8px', flexShrink: 0,
       }}>
         <span style={{
-          fontSize: '11px', fontWeight: 700, color: '#dc2626',
+          fontSize: '11px', fontWeight: 700, color: '#0f172a',
           textTransform: 'uppercase', letterSpacing: '0.08em',
         }}>
-          Traditional Approach
+          From Raw Input to Graph
         </span>
-        {showGdpr && (
-          <span style={{
-            fontSize: '10px', fontWeight: 700, color: '#dc2626',
-            background: '#fef2f2', border: '1px solid #fecaca',
-            borderRadius: '4px', padding: '2px 6px',
-            animation: 'pulseGlow 2s ease-in-out infinite',
-          }}>
-            ⚠ GDPR AUDIT RISK
-          </span>
-        )}
       </div>
 
       <div style={{
         flex: 1, minHeight: 0, overflow: 'hidden',
-        background: '#fff', border: '1px solid #fecaca',
+        background: '#fff', border: '1px solid #e2e8f0',
         borderRadius: '10px', display: 'flex', flexDirection: 'column',
       }}>
         <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
@@ -187,24 +207,61 @@ function TraditionalPanel({
             </div>
           )}
           {sessions.map((s, i) => (
-            <div key={i} style={{
-              padding: '8px 10px', borderRadius: '8px', marginBottom: '4px',
-              animation: 'rowIn 0.25s ease both',
-              background: '#fef2f2', border: '1px solid #fee2e2',
-            }}>
+            <div key={i} style={{ marginBottom: '10px', animation: 'rowIn 0.25s ease both' }}>
               <div style={{
-                display: 'flex', justifyContent: 'space-between',
-                alignItems: 'center', marginBottom: '4px',
+                padding: '8px 10px', borderRadius: '8px',
+                background: '#fef2f2', border: '1px solid #fee2e2',
               }}>
-                <span style={{ fontSize: '11px', fontWeight: 600, color: '#dc2626' }}>
-                  {s.email}
-                </span>
-                <span style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'ui-monospace, monospace' }}>
-                  {s.time}
-                </span>
+                <div style={{
+                  display: 'flex', justifyContent: 'space-between',
+                  alignItems: 'center', marginBottom: '6px',
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 600, color: '#dc2626' }}>
+                      {s.email}
+                    </span>
+                    <span style={{
+                      fontSize: '10px', color: '#b91c1c',
+                      border: '1px solid #fecaca', background: '#fff1f2',
+                      borderRadius: '4px', padding: '1px 5px', fontFamily: 'ui-monospace, monospace',
+                    }}>
+                      raw intake
+                    </span>
+                  </div>
+                  <span style={{ fontSize: '10px', color: '#94a3b8', fontFamily: 'ui-monospace, monospace' }}>
+                    {s.time}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginBottom: '5px' }}>
+                  {concernsForSession(s).map(tag => (
+                    <span
+                      key={`${s.time}-${tag.label}`}
+                      style={{
+                        fontSize: '10px',
+                        fontFamily: 'ui-monospace, monospace',
+                        padding: '1px 6px',
+                        borderRadius: '999px',
+                        border: tag.tone === 'danger' ? '1px solid #fca5a5' : '1px solid #fed7aa',
+                        background: tag.tone === 'danger' ? '#fef2f2' : '#fff7ed',
+                        color: tag.tone === 'danger' ? '#b91c1c' : '#c2410c',
+                      }}
+                    >
+                      {tag.label}
+                    </span>
+                  ))}
+                </div>
+
+                <div style={{ fontSize: '12px', color: '#334155', fontStyle: 'italic' }}>
+                  "{s.text}"
+                </div>
               </div>
-              <div style={{ fontSize: '12px', color: '#334155', fontStyle: 'italic' }}>
-                "{s.text}"
+
+              <div style={{
+                marginTop: '6px', marginLeft: '24px',
+                paddingLeft: '10px', borderLeft: '2px solid #bbf7d0',
+              }}>
+                <EngramEntry session={s} />
               </div>
             </div>
           ))}
@@ -212,74 +269,48 @@ function TraditionalPanel({
 
         {showQuery && (
           <div style={{
-            borderTop: '1px solid #fee2e2', padding: '10px 12px',
-            animation: 'rowIn 0.3s ease both', background: '#fff5f5', flexShrink: 0,
+            borderTop: '1px solid #e2e8f0', padding: '10px 12px',
+            animation: 'rowIn 0.3s ease both', background: '#f8fafc', flexShrink: 0,
           }}>
             <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '6px', fontFamily: 'ui-monospace, monospace' }}>
               $ who_said_what --query "auth 401"
             </div>
-            <div style={{ fontSize: '11px', fontFamily: 'ui-monospace, monospace', color: '#dc2626', lineHeight: 1.6 }}>
-              alice@corp.com  · 2 messages  ✓<br />
-              bob@corp.com    · 1 message   ✓<br />
-              carol@corp.com  · 1 message   ✓<br />
-              dave@corp.com   · 1 message   ✓
-            </div>
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
+            <div style={{
+              display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px',
+              alignItems: 'start',
+            }}>
+              <div>
+                <div style={{
+                  fontSize: '10px', color: '#b91c1c', marginBottom: '4px',
+                  fontFamily: 'ui-monospace, monospace', textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                }}>
+                  raw log query
+                </div>
+                <div style={{ fontSize: '11px', fontFamily: 'ui-monospace, monospace', color: '#dc2626', lineHeight: 1.6 }}>
+                  alice@corp.com  · 2 messages  ✓<br />
+                  bob@corp.com    · 1 message   ✓<br />
+                  carol@corp.com  · 1 message   ✓<br />
+                  dave@corp.com   · 1 message   ✓
+                </div>
+              </div>
 
-// ── Right panel — Engram ──────────────────────────────────────────────────────
-
-function EngramPanel({ sessions, showQuery }: { sessions: Session[]; showQuery: boolean }) {
-  const scrollRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
-  }, [sessions.length])
-
-  return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-      {/* Panel title */}
-      <div style={{ marginBottom: '8px', flexShrink: 0 }}>
-        <span style={{
-          fontSize: '11px', fontWeight: 700, color: '#16a34a',
-          textTransform: 'uppercase', letterSpacing: '0.08em',
-        }}>
-          Engram
-        </span>
-      </div>
-
-      <div style={{
-        flex: 1, minHeight: 0, overflow: 'hidden',
-        background: '#fff', border: '1px solid #bbf7d0',
-        borderRadius: '10px', display: 'flex', flexDirection: 'column',
-      }}>
-        <div ref={scrollRef} style={{ flex: 1, overflowY: 'auto', padding: '8px' }}>
-          {sessions.length === 0 && (
-            <div style={{ padding: '24px', textAlign: 'center', fontSize: '12px', color: '#cbd5e1' }}>
-              Waiting…
-            </div>
-          )}
-          {sessions.map((s, i) => <EngramEntry key={i} session={s} />)}
-        </div>
-
-        {showQuery && (
-          <div style={{
-            borderTop: '1px solid #dcfce7', padding: '10px 12px',
-            animation: 'rowIn 0.3s ease both', background: '#f0fdf4', flexShrink: 0,
-          }}>
-            <div style={{ fontSize: '10px', color: '#94a3b8', marginBottom: '6px', fontFamily: 'ui-monospace, monospace' }}>
-              $ who_said_what --query "auth 401"
-            </div>
-            <div style={{ fontSize: '12px', color: '#15803d', fontWeight: 600, marginBottom: '2px' }}>
-              Query not possible.
-            </div>
-            <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.5 }}>
-              Raw input was never stored at any layer.<br />
-              The graph holds node activation patterns, not text.
+              <div>
+                <div style={{
+                  fontSize: '10px', color: '#15803d', marginBottom: '4px',
+                  fontFamily: 'ui-monospace, monospace', textTransform: 'uppercase',
+                  letterSpacing: '0.06em',
+                }}>
+                  engram graph query
+                </div>
+                <div style={{ fontSize: '12px', color: '#15803d', fontWeight: 600, marginBottom: '2px' }}>
+                  Query not possible.
+                </div>
+                <div style={{ fontSize: '11px', color: '#64748b', lineHeight: 1.5 }}>
+                  Raw input was never stored at any layer.<br />
+                  The graph holds node activation patterns, not text.
+                </div>
+              </div>
             </div>
           </div>
         )}
@@ -290,44 +321,45 @@ function EngramPanel({ sessions, showQuery }: { sessions: Session[]; showQuery: 
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function PrivacyByArchitecture() {
+export default function PrivacyByArchitecture({ paused }: { paused?: boolean }) {
   const [visibleCount, setVisibleCount] = useState(0)
   const [showGdpr, setShowGdpr]         = useState(false)
   const [showQuery, setShowQuery]       = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  const pausedRef = useRef(paused)
+
+  useEffect(() => { pausedRef.current = paused }, [paused])
 
   function clearAll() { timers.current.forEach(clearTimeout); timers.current = [] }
+
+  const sched = useCallback((delay: number, fn: () => void) => {
+    if (pausedRef.current) {
+      const poll = setInterval(() => {
+        if (!pausedRef.current) { clearInterval(poll); sched(delay, fn) }
+      }, 100)
+      timers.current.push(poll as unknown as ReturnType<typeof setTimeout>)
+      return
+    }
+    const t = setTimeout(fn, delay)
+    timers.current.push(t)
+  }, [])
 
   function run() {
     // Reveal sessions one at a time
     SESSIONS.forEach((_, i) => {
-      const t = setTimeout(() => {
+      sched(800 + i * SESSION_GAP, () => {
         setVisibleCount(i + 1)
         if (i >= 2) setShowGdpr(true)
-      }, 800 + i * SESSION_GAP)
-      timers.current.push(t)
+      })
     })
 
     // Show "who said what" after all sessions
     const afterAll = 800 + SESSIONS.length * SESSION_GAP
-    const t1 = setTimeout(() => setShowQuery(true), afterAll + 1200)
-    timers.current.push(t1)
-
-    // Reset and loop
-    const t2 = setTimeout(() => {
-      clearAll()
-      setVisibleCount(0)
-      setShowGdpr(false)
-      setShowQuery(false)
-      const t3 = setTimeout(run, 400)
-      timers.current.push(t3)
-    }, afterAll + RESET_PAUSE)
-    timers.current.push(t2)
+    sched(afterAll + 1200, () => setShowQuery(true))
   }
 
   useEffect(() => {
-    const t = setTimeout(run, 500)
-    timers.current.push(t)
+    sched(500, run)
     return clearAll
   }, [])
 
@@ -339,31 +371,16 @@ export default function PrivacyByArchitecture() {
       {/* Header */}
       <div style={{ flexShrink: 0 }}>
         <span style={{ fontSize: '13px', fontWeight: 600, color: '#0f172a' }}>
-          Same 5 sessions — two different architectures
+          Same 5 sessions — one cascading privacy transformation
         </span>
         <span style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '10px' }}>
-          watching what each system stores
+          raw intake first, then Engram-only representation
         </span>
       </div>
 
-      {/* Two panels */}
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', gap: '16px' }}>
-        <TraditionalPanel sessions={visible} showGdpr={showGdpr} showQuery={showQuery} />
-
-        {/* VS divider */}
-        <div style={{
-          display: 'flex', flexDirection: 'column', alignItems: 'center',
-          justifyContent: 'center', gap: '8px', flexShrink: 0,
-        }}>
-          <div style={{ flex: 1, width: '1px', background: '#e2e8f0' }} />
-          <span style={{
-            fontSize: '10px', fontWeight: 700, color: '#94a3b8',
-            letterSpacing: '0.08em', padding: '4px',
-          }}>VS</span>
-          <div style={{ flex: 1, width: '1px', background: '#e2e8f0' }} />
-        </div>
-
-        <EngramPanel sessions={visible} showQuery={showQuery} />
+      {/* Unified cascade */}
+      <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
+        <CascadePanel sessions={visible} showGdpr={showGdpr} showQuery={showQuery} />
       </div>
 
       {/* Key insight */}

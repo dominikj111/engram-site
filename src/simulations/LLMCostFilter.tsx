@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -9,10 +9,10 @@ interface QueryDef {
   elapsed: number
 }
 
-interface QueryEntry extends QueryDef {
-  id: number
-  state: 'arriving' | 'resolved'
-}
+type FeedEntry =
+  | { id: number; kind: 'query';     text: string; route: 'engram' | 'llm'; result: string; elapsed: number; state: 'arriving' | 'resolved' }
+  | { id: number; kind: 'learned';   text: string }
+  | { id: number; kind: 'separator'; learned: number }
 
 // ── Query sequences ───────────────────────────────────────────────────────────
 // Cold queries: graph is fresh, many LLM fallbacks
@@ -48,9 +48,8 @@ const WARM: QueryDef[] = COLD.map(q =>
     : q
 )
 
-const QUERY_INTERVAL = 950   // ms between queries
 const LLM_RESOLVE   = 1350  // ms to simulate LLM latency
-const MAX_ROWS      = 13    // rows kept in DOM
+const QUERY_GAP     = 260   // ms between queries after previous resolves
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -70,7 +69,60 @@ function RouteChip({ route }: { route: 'engram' | 'llm' }) {
   )
 }
 
-function QueryRow({ entry }: { entry: QueryEntry }) {
+function FeedRow({ entry }: { entry: FeedEntry }) {
+  if (entry.kind === 'learned') {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '6px',
+        padding: '3px 14px 5px 20px',
+        animation: 'rowIn 0.3s ease both',
+      }}>
+        <span style={{ fontSize: '10px', color: '#16a34a' }}>↑</span>
+        <span style={{
+          fontSize: '10px', fontFamily: 'ui-monospace, monospace',
+          color: '#15803d', background: '#f0fdf4',
+          border: '1px solid #bbf7d0', borderRadius: '4px',
+          padding: '1px 7px',
+        }}>
+          path learned
+        </span>
+        <span style={{
+          fontSize: '10px', color: '#94a3b8', fontFamily: 'ui-monospace, monospace',
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1,
+        }}>
+          {entry.text}
+        </span>
+      </div>
+    )
+  }
+
+  if (entry.kind === 'separator') {
+    return (
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: '8px',
+        padding: '8px 14px',
+        borderTop: '1px solid #dcfce7', borderBottom: '1px solid #dcfce7',
+        background: '#f0fdf4',
+        animation: 'rowIn 0.3s ease both',
+      }}>
+        <span style={{ fontSize: '10px', fontWeight: 700, color: '#15803d', letterSpacing: '0.06em' }}>
+          GRAPH WARMED
+        </span>
+        <span style={{
+          fontSize: '10px', fontWeight: 700, color: '#15803d',
+          background: '#dcfce7', border: '1px solid #bbf7d0',
+          borderRadius: '20px', padding: '1px 8px',
+        }}>
+          {entry.learned} paths learned
+        </span>
+        <span style={{ fontSize: '10px', color: '#64748b' }}>
+          — next queries resolve without LLM
+        </span>
+      </div>
+    )
+  }
+
+  // kind === 'query'
   const done = entry.state === 'resolved'
   const isEngram = entry.route === 'engram'
   return (
@@ -123,49 +175,83 @@ function StatBlock({ value, label, color }: { value: number | string; label: str
 
 // ── Main ─────────────────────────────────────────────────────────────────────
 
-export default function LLMCostFilter() {
-  const [entries, setEntries]   = useState<QueryEntry[]>([])
-  const [stats, setStats]       = useState({ engram: 0, llm: 0 })
+export default function LLMCostFilter({ paused }: { paused?: boolean }) {
+  const [entries, setEntries]   = useState<FeedEntry[]>([])
+  const [stats, setStats]       = useState({ engram: 0, llm: 0, learned: 0 })
   const timers     = useRef<ReturnType<typeof setTimeout>[]>([])
   const idRef      = useRef(0)
   const scrollRef  = useRef<HTMLDivElement>(null)
+  const pausedRef  = useRef(paused)
+
+  useEffect(() => { pausedRef.current = paused }, [paused])
 
   function clearAll() { timers.current.forEach(clearTimeout); timers.current = [] }
 
-  function fire(qDef: QueryDef) {
+  const sched = useCallback((delay: number, fn: () => void) => {
+    if (pausedRef.current) {
+      const poll = setInterval(() => {
+        if (!pausedRef.current) { clearInterval(poll); sched(delay, fn) }
+      }, 100)
+      timers.current.push(poll as unknown as ReturnType<typeof setTimeout>)
+      return
+    }
+    const t = setTimeout(fn, delay)
+    timers.current.push(t)
+  }, [])
+
+  function fire(qDef: QueryDef, onDone?: () => void) {
     const id = idRef.current++
-    setEntries(prev => [...prev.slice(-(MAX_ROWS - 1)), { id, ...qDef, state: 'arriving' }])
+    setEntries(prev => [...prev, { id, kind: 'query', ...qDef, state: 'arriving' }])
     const resolveMs = qDef.route === 'engram' ? qDef.elapsed : LLM_RESOLVE
-    const t = setTimeout(() => {
-      setEntries(prev => prev.map(e => e.id === id ? { ...e, state: 'resolved' } : e))
+    sched(resolveMs, () => {
+      setEntries(prev => prev.map(e => e.id === id && e.kind === 'query' ? { ...e, state: 'resolved' } : e))
       setStats(prev => qDef.route === 'engram'
         ? { ...prev, engram: prev.engram + 1 }
         : { ...prev, llm: prev.llm + 1 }
       )
-    }, resolveMs)
-    timers.current.push(t)
+      // After LLM resolves, show learning row
+      if (qDef.route === 'llm') {
+        sched(380, () => {
+          setEntries(prev => [...prev, { id: idRef.current++, kind: 'learned', text: qDef.text }])
+          setStats(prev => ({ ...prev, learned: prev.learned + 1 }))
+          onDone?.()
+        })
+      } else {
+        onDone?.()
+      }
+    })
+  }
+
+  function runSequential(queries: QueryDef[], idx: number, onDone: () => void) {
+    if (idx >= queries.length) { onDone(); return }
+    fire(queries[idx], () => sched(QUERY_GAP, () => runSequential(queries, idx + 1, onDone)))
   }
 
   function runLoop(loopIndex: number) {
+    if (loopIndex > 1) return
     const queries = loopIndex === 0 ? COLD : WARM
-    queries.forEach((q, i) => {
-      const t = setTimeout(() => fire(q), i * QUERY_INTERVAL)
-      timers.current.push(t)
+    runSequential(queries, 0, () => {
+      if (loopIndex === 0) {
+        // Show separator with learned count, then start warm loop
+        const learnedCount = COLD.filter(q => q.route === 'llm').length
+        sched(600, () => {
+          setEntries(prev => [...prev, { id: idRef.current++, kind: 'separator', learned: learnedCount }])
+          sched(2000, () => runLoop(1))
+        })
+      }
     })
-    const loopDuration = queries.length * QUERY_INTERVAL + 3500 // 3.5s pause
-    const t = setTimeout(() => runLoop(loopIndex + 1), loopDuration)
-    timers.current.push(t)
   }
 
   useEffect(() => {
-    const t = setTimeout(() => runLoop(0), 400)
-    timers.current.push(t)
+    sched(400, () => runLoop(0))
     return clearAll
   }, [])
 
   useEffect(() => {
     const el = scrollRef.current
-    if (el) el.scrollTop = el.scrollHeight
+    if (!el) return
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+    if (nearBottom) el.scrollTop = el.scrollHeight
   }, [entries.length])
 
   const total    = stats.engram + stats.llm
@@ -181,7 +267,7 @@ export default function LLMCostFilter() {
             CI/CD Triage — Live Query Routing
           </span>
           <span style={{ fontSize: '12px', color: '#94a3b8', marginLeft: '10px' }}>
-            graph warms up as sessions accumulate
+            LLM answers write back as graph paths — cold cache fills in real time
           </span>
         </div>
         <div style={{ display: 'flex', gap: '6px' }}>
@@ -222,7 +308,7 @@ export default function LLMCostFilter() {
               Starting…
             </div>
           )}
-          {entries.map(e => <QueryRow key={e.id} entry={e} />)}
+          {entries.map(e => <FeedRow key={e.id} entry={e} />)}
         </div>
       </div>
 
@@ -235,6 +321,8 @@ export default function LLMCostFilter() {
         <StatBlock value={stats.engram} label="Handled by Engram" color="#16a34a" />
         <div style={{ width: '1px', background: '#e2e8f0' }} />
         <StatBlock value={stats.llm} label="API calls made" color="#7c3aed" />
+        <div style={{ width: '1px', background: '#e2e8f0' }} />
+        <StatBlock value={stats.learned} label="Paths learned" color="#0369a1" />
         <div style={{ width: '1px', background: '#e2e8f0' }} />
 
         {/* Savings progress */}

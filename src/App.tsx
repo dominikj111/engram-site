@@ -4,17 +4,19 @@ import PrivacyByArchitecture from './simulations/PrivacyByArchitecture'
 import MCPAgentMemory from './simulations/MCPAgentMemory'
 import GraphLearns from './simulations/GraphLearns'
 import LLMToolGateway from './simulations/LLMToolGateway'
+import EngramFlow from './simulations/EngramFlow'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type TabId = 'llm-cost' | 'privacy' | 'mcp' | 'learning' | 'gateway'
+type TabId = 'session' | 'llm-cost' | 'mcp' | 'gateway' | 'privacy' | 'learning'
 
-const TABS: { id: TabId; label: string; tagline: string }[] = [
-  { id: 'llm-cost', label: 'LLM Cost Filter',        tagline: 'Handle the majority of queries without touching the API.' },
-  { id: 'privacy',  label: 'Privacy by Architecture', tagline: 'The attribution is structurally absent — not scrubbed, never recorded.' },
-  { id: 'mcp',      label: 'MCP Agent Memory',        tagline: 'Give your LLM agent a persistent, self-improving knowledge base.' },
-  { id: 'learning', label: 'Graph Learns',            tagline: 'Every session makes the next one cheaper. No retraining required.' },
-  { id: 'gateway',  label: 'LLM Tool Gateway',        tagline: 'The LLM can only do what the contract allows. Not a guardrail — a wall.' },
+const TABS: { id: TabId; label: string; tagline: string; height: number }[] = [
+  { id: 'session',  label: 'Interactive Troubleshooting', tagline: 'Watch Engram navigate a real problem. Click Yes/No at each checkpoint.',             height: 920  },
+  { id: 'llm-cost', label: 'LLM Cost Filter',             tagline: 'Graph hits first. LLM only when needed. Every LLM answer teaches the graph.',     height: 740  },
+  { id: 'mcp',      label: 'MCP Agent Memory',            tagline: 'Two agents. One graph. Each session makes both smarter.',                          height: 900  },
+  { id: 'gateway',  label: 'LLM Tool Gateway',            tagline: 'The LLM can only do what the contract allows. Not a guardrail — a wall.',            height: 1100 },
+  { id: 'privacy',  label: 'Privacy by Architecture',     tagline: 'The attribution is structurally absent — not scrubbed, never recorded.',              height: 760  },
+  // { id: 'learning', label: 'Learning Over Time', tagline: 'Same query. 50 sessions later: faster, cheaper, zero LLM calls.', height: 760 }, // merged into LLM Cost Filter
 ]
 
 // ── Content ───────────────────────────────────────────────────────────────────
@@ -114,20 +116,23 @@ const PHASES = [
 ]
 
 const SIM_INFO: Record<TabId, { body: string }> = {
-  'llm-cost': {
-    body: 'Routes every query through the graph first. Common patterns resolve locally without an API call. Only when confidence falls below threshold does the system escalate to the LLM — carrying a structured context payload, not a raw conversation thread. In bounded domains, the majority of queries never touch the API.',
+  'session': {
+    body: 'A live case investigation: the graph activates against your problem, narrows via breaking questions, and fires a revertable action. If the first path fails, it rolls back, learns, and tries the next candidate. Click Yes or No at each checkpoint to steer the reasoning.',
   },
-  'privacy': {
-    body: 'Input is tokenised at ingestion and the raw text is discarded immediately. What persists downstream is only graph node IDs. Privacy is structural — there is nothing to scrub because the attributable form never existed past the tokeniser. No policy enforcement, no audit scrub pipeline required.',
+  'llm-cost': {
+    body: 'Every query hits the graph first. If a confirmed path exists it resolves in under 100ms — no API call, no token spend. When confidence falls below threshold Engram escalates to the LLM with a structured payload, not a raw thread. Critically: every LLM answer is written back as a new graph path. Watch the cold cache fill up in real time — each LLM call is the last time that query ever needs one.',
   },
   'mcp': {
-    body: 'The LLM drives the interaction and calls Engram as a tool mid-reasoning — querying the graph for confirmed knowledge, retrieving structured paths with confidence scores and ruled-out candidates. Confirmed answers feed back via engram.confirm(), reinforcing the graph. Over time, queries that initially required model reasoning resolve from Engram alone.',
-  },
-  'learning': {
-    body: 'After each confirmed session, edge weights update in real time via a Rescorla-Wagner-inspired learning rule. The most reliable paths strengthen; weak paths fade. No labelled dataset, no retraining cycle, no deployment window. Every session makes the next one cheaper and more confident.',
+    body: 'Two LLM agents share a single Engram graph via MCP. Agent A asks a question Engram can\'t answer, escalates to the LLM, then confirms the result — strengthening the path. Moments later Agent B asks the same question and resolves it directly from the graph. Watch the shared edge weights update in real time and the second agent benefit from knowledge it never generated.',
   },
   'gateway': {
-    body: 'When an LLM calls Engram via MCP, the only operations available are those explicitly enumerated in the action contract. Permissions, rate limits, and confirmation requirements are declared in a policy file and enforced before any execution layer call. The LLM cannot trigger an action outside the contract — not because a prompt says so, but because the execution pathway does not exist. Every call is evaluated, every block is logged, and the policy file is the complete audit surface.',
+    body: 'When an LLM calls Engram via MCP, the only operations available are those explicitly enumerated in the action contract. Permissions, rate limits, and confirmation requirements are enforced before any execution layer call. Watch DropDatabase fail on the first check — the execution pathway doesn\'t exist. Every call is evaluated, every block is logged, and the policy file is the complete audit surface.',
+  },
+  'privacy': {
+    body: 'Input is tokenised at ingestion and the raw text is discarded immediately. What persists downstream is only graph node IDs. Watch both pipelines side by side: the traditional system stores PII at every stage, while Engram\'s pipeline structurally cannot — there is nothing to scrub because the attributable form never existed past the tokeniser.',
+  },
+  'learning': {
+    body: 'Session 1: cold graph, every lookup is slow, confidence drops, we escalate to the LLM. Session 50: the same query resolves instantly with zero LLM calls. Edge weights have climbed, weak paths have faded. No feedback loop, no retraining — Rescorla-Wagner-inspired weights update after every confirmed outcome.',
   },
 }
 
@@ -160,7 +165,7 @@ function Tag({ label, color, bg }: { label: string; color: string; bg: string })
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 export default function App() {
-  const [simView, setSimView]     = useState<TabId>('llm-cost')
+  const [simView, setSimView]     = useState<TabId>('session')
   const [simKey, setSimKey]       = useState(0)
   const [simPaused, setSimPaused] = useState(false)
   const [selectedPhase, setSelectedPhase] = useState(() => PHASES.find(p => !p.done)?.n ?? 1)
@@ -394,8 +399,8 @@ export default function App() {
             </span>
           </div>
           <p style={{ fontSize: '14px', color: '#64748b', margin: 0 }}>
-            Four use cases that demonstrate Engram's core properties. Each shows a distinct aspect of the design —
-            select a use case to read about it, or view the animated simulations.
+            Six use cases aligned with Engram's strategic priorities. Each shows a distinct aspect of the design —
+            select a tab to read the narrative and watch the animated simulation.
           </p>
         </div>
 
@@ -463,11 +468,12 @@ export default function App() {
               {SIM_INFO[simView].body}
             </p>
           </div>
-          <div key={`${simView}-${simKey}`} style={{ height: '1100px', background: '#f8fafc' }}>
-            {simView === 'llm-cost' && <LLMCostFilter />}
-            {simView === 'privacy'  && <PrivacyByArchitecture />}
-            {simView === 'mcp'      && <MCPAgentMemory />}
-            {simView === 'learning' && <GraphLearns />}
+          <div key={`${simView}-${simKey}`} style={{ height: `${TABS.find(t => t.id === simView)!.height}px`, background: '#f8fafc' }}>
+            {simView === 'session'  && <EngramFlow paused={simPaused} />}
+            {simView === 'llm-cost' && <LLMCostFilter paused={simPaused} />}
+            {simView === 'privacy'  && <PrivacyByArchitecture paused={simPaused} />}
+            {simView === 'mcp'      && <MCPAgentMemory paused={simPaused} />}
+            {simView === 'learning' && <GraphLearns paused={simPaused} />}
             {simView === 'gateway'  && <LLMToolGateway paused={simPaused} />}
           </div>
         </div>
@@ -520,9 +526,18 @@ export default function App() {
 
       {/* ── Status / Roadmap ── */}
       <section style={{ padding: '0 32px 72px' }}>
-        <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: '0 0 6px', letterSpacing: '-0.02em' }}>
-          Status
-        </h2>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px' }}>
+          <h2 style={{ fontSize: '24px', fontWeight: 700, color: '#0f172a', margin: 0, letterSpacing: '-0.02em' }}>
+            Status
+          </h2>
+          <span style={{
+            fontSize: '10px', fontWeight: 700, color: '#b45309',
+            background: '#fffbeb', border: '1px solid #fde68a',
+            borderRadius: '4px', padding: '2px 7px', letterSpacing: '0.04em',
+          }}>
+            UNDER CONSTRUCTION
+          </span>
+        </div>
         <p style={{ fontSize: '14px', color: '#64748b', margin: '0 0 20px' }}>
           The Rust binary is the reference implementation. The knowledge file format (JSON) and the reasoning spec are language-agnostic.
         </p>

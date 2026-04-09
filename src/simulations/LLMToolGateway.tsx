@@ -53,6 +53,7 @@ interface HistoryEntry {
   verdict:   Verdict
   outcome:   string
   isReeval?: boolean
+  blockedReason?: string
 }
 
 // ── Call sequence ──────────────────────────────────────────────────────────────
@@ -75,37 +76,19 @@ const CALLS: CallDef[] = [
     },
   },
 
-  // ── 2. Single re-eval ↺ — intro to exception recovery
+  // ── 2. Blocked — admin bypass attempt (no pathway)
   {
-    tool: 'GetServiceStatus',
-    params: 'service="monitoring-api"',
-    verdict: 'exception',
+    tool: 'ForceDeleteUser',
+    params: 'user_id=42, override="admin_bypass"',
+    verdict: 'blocked',
     steps: [
-      { check: 'Contract',   result: 'In actions.json',                              pass: true  },
-      { check: 'Execution',  result: 'service_unavailable — monitoring-api timeout', pass: false },
+      { check: 'Contract', result: 'Not in actions.json — no execution pathway exists', pass: false },
     ],
-    outcome: 'service_unavailable exception returned to graph — monitoring-api timeout',
+    outcome: 'execution layer not reached',
     terminus: {
       kind:  'engine',
-      node:  'service_unavailable',
-      emits: 'graph re-evaluates with exception context → checks cache fallback',
-    },
-    reeval: {
-      contextAdded: 'monitoring-api timeout → cache hit available (TTL 120s)',
-      priorContext: [
-        'monitoring-api: service_unavailable (timeout)',
-      ],
-      steps: [
-        { check: 'Context',   result: 'cache hit available — TTL valid',     pass: true },
-        { check: 'Execution', result: 'serve from cache → status: degraded', pass: true },
-      ],
-      verdict: 'allowed',
-      outcome: 'cached response dispatched to execution layer',
-      terminus: {
-        kind:  'envelope',
-        node:  'solution_node',
-        emits: 'ResponseEnvelope → LLM: { service_status: degraded, source: cache, age: 47s }',
-      },
+      node:  'unknown_action',
+      emits: 'ResponseEnvelope → LLM: escalation payload — ForceDeleteUser is not a registered action',
     },
   },
 
@@ -126,41 +109,7 @@ const CALLS: CallDef[] = [
     },
   },
 
-  // ── 4. Blocked — unknown action
-  {
-    tool: 'DropDatabase',
-    params: 'name="production"',
-    verdict: 'blocked',
-    steps: [
-      { check: 'Contract', result: 'Not in actions.json — no execution pathway exists', pass: false },
-    ],
-    outcome: 'execution layer not reached',
-    terminus: {
-      kind:  'engine',
-      node:  'unknown_action',
-      emits: 'ResponseEnvelope → LLM: escalation payload with confirmed facts + session_id',
-    },
-  },
-
-  // ── 5. Confirm
-  {
-    tool: 'CancelService',
-    params: 'account_id=42, reason="non-payment"',
-    verdict: 'confirm',
-    steps: [
-      { check: 'Contract',     result: 'In actions.json',                     pass: true },
-      { check: 'Permission',   result: 'Authenticated — met',                 pass: true },
-      { check: 'Confirmation', result: 'Required — destructive, no rollback', pass: true },
-    ],
-    outcome: 'execution layer paused — awaiting confirmation',
-    terminus: {
-      kind:  'engine',
-      node:  'confirmation_required',
-      emits: 'ResponseEnvelope → LLM: "Confirm cancellation for account 42? This cannot be undone."',
-    },
-  },
-
-  // ── 6. SHOWCASE: double re-eval ↺↺
+  // ── 4. SHOWCASE: double re-eval ↺↺
   //    exception → ↺ exception → ↺↺ allowed
   //    LLM sees only the final ResponseEnvelope — two full recovery rounds invisible to it
   {
@@ -218,6 +167,40 @@ const CALLS: CallDef[] = [
     },
   },
 
+  // ── 5. Blocked — unknown action
+  {
+    tool: 'DropDatabase',
+    params: 'name="production"',
+    verdict: 'blocked',
+    steps: [
+      { check: 'Contract', result: 'Not in actions.json — no execution pathway exists', pass: false },
+    ],
+    outcome: 'execution layer not reached',
+    terminus: {
+      kind:  'engine',
+      node:  'unknown_action',
+      emits: 'ResponseEnvelope → LLM: escalation payload with confirmed facts + session_id',
+    },
+  },
+
+  // ── 6. Confirm
+  {
+    tool: 'CancelService',
+    params: 'account_id=42, reason="non-payment"',
+    verdict: 'confirm',
+    steps: [
+      { check: 'Contract',     result: 'In actions.json',                     pass: true },
+      { check: 'Permission',   result: 'Authenticated — met',                 pass: true },
+      { check: 'Confirmation', result: 'Required — destructive, no rollback', pass: true },
+    ],
+    outcome: 'execution layer paused — awaiting confirmation',
+    terminus: {
+      kind:  'engine',
+      node:  'confirmation_required',
+      emits: 'ResponseEnvelope → LLM: "Confirm cancellation for account 42? This cannot be undone."',
+    },
+  },
+
   // ── 7. Allowed
   {
     tool: 'CheckLineStatus',
@@ -253,39 +236,19 @@ const CALLS: CallDef[] = [
     },
   },
 
-  // ── 9. Single re-eval ↺ — auth recovery
+  // ── 9. Blocked — path traversal attempt (no pathway)
   {
-    tool: 'FetchUserProfile',
-    params: 'user_id=42, service="profile-api"',
-    verdict: 'exception',
+    tool: 'ReadInternalConfig',
+    params: 'path="/etc/secrets/db_credentials.env"',
+    verdict: 'blocked',
     steps: [
-      { check: 'Contract',   result: 'In actions.json',                           pass: true  },
-      { check: 'Permission', result: 'Authenticated — met',                       pass: true  },
-      { check: 'Execution',  result: 'service_unavailable — profile-api timeout', pass: false },
+      { check: 'Contract', result: 'Not in actions.json — no execution pathway exists', pass: false },
     ],
-    outcome: 'service_unavailable exception returned to graph — profile-api timeout',
+    outcome: 'execution layer not reached',
     terminus: {
       kind:  'engine',
-      node:  'service_unavailable',
-      emits: 'graph re-evaluates with exception context → queues recovery actions',
-    },
-    reeval: {
-      contextAdded: 'service_unavailable → RefreshToken queued → token refreshed',
-      priorContext: [
-        'profile-api: service_unavailable (timeout)',
-      ],
-      steps: [
-        { check: 'Context',   result: 'service_unavailable + auth_expired detected', pass: true },
-        { check: 'Recovery',  result: 'RefreshToken completed — new token valid',    pass: true },
-        { check: 'Execution', result: 'retry FetchUserProfile → 200 OK',             pass: true },
-      ],
-      verdict: 'allowed',
-      outcome: 'recovery dispatched to execution layer',
-      terminus: {
-        kind:  'envelope',
-        node:  'solution_node',
-        emits: 'ResponseEnvelope → LLM: { user_id: 42, plan: pro, status: ok }',
-      },
+      node:  'unknown_action',
+      emits: 'ResponseEnvelope → LLM: escalation payload — ReadInternalConfig is not a registered action',
     },
   },
 
@@ -390,6 +353,7 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
   const [active,  setActive]  = useState<ActiveState | null>(null)
   const [history, setHistory] = useState<HistoryEntry[]>([])
   const [stats,   setStats]   = useState({ allowed: 0, blocked: 0, confirm: 0, exception: 0 })
+  const [completed, setCompleted] = useState(false)
 
   const timers      = useRef<ReturnType<typeof setTimeout>[]>([])
   const alive       = useRef(true)
@@ -449,6 +413,7 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
             tool: def.tool, params: def.params,
             verdict: def.verdict, outcome: def.outcome,
             isReeval,
+            blockedReason: getBlockedReason(def),
           }, ...h.slice(0, 19)])
           setActive(null)
           sched(INTER_MS, onDone)
@@ -460,7 +425,8 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
   }, [sched])
 
   const runCall = useCallback((idx: number) => {
-    const def = CALLS[idx % CALLS.length]
+    if (idx >= CALLS.length) { setCompleted(true); return }  // stop after last call
+    const def = CALLS[idx]
 
     // Recursively process re-eval chain — each round may itself throw and chain another
     function processReeval(r: ReevalDef, onDone: () => void) {
@@ -482,6 +448,7 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
 
   useEffect(() => {
     alive.current = true
+    setCompleted(false)
     sched(500, () => runCall(0))
     return () => { alive.current = false; timers.current.forEach(clearTimeout) }
   }, [runCall, sched])
@@ -492,7 +459,7 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
   if (active) lastActiveRef.current = active
   const display = active ?? lastActiveRef.current
 
-  const panelOpacity = active != null ? 1 : paused ? 1 : 0
+  const panelOpacity = active != null ? 1 : (paused || completed) ? 1 : 0
 
   const termCfg = display?.def.terminus.kind === 'envelope'
     ? { label: 'RESPONSE', color: '#15803d', bg: '#f0fdf4', border: '#bbf7d0' }
@@ -506,6 +473,16 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
     : '#e2e8f0'
 
   const hasCtx = (display?.priorCtx?.length ?? 0) > 0 || !!display?.contextNew
+  const isRepeatEvent = display?.def.tool === 'ProcessPayment' && hasCtx
+
+  const getBlockedReason = (def: CallDef): string | undefined => {
+    if (def.verdict !== 'blocked') return undefined
+    const contractFailed = def.steps.some(s => s.check === 'Contract' && !s.pass)
+    if (contractFailed) return 'NOT REGISTERED ACTION'
+    const permissionFailed = def.steps.some(s => s.check === 'Permission' && !s.pass)
+    if (permissionFailed) return 'PERMISSION DENIED'
+    return 'BLOCKED BY POLICY'
+  }
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 20px', gap: '10px' }}>
@@ -571,10 +548,10 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
               fontSize: '9px', fontWeight: 700, letterSpacing: '0.07em',
               color: hasCtx ? '#b45309' : '#94a3b8',
               transition: 'color 0.35s ease',
-            }}>↺ ACCUMULATED CONTEXT</span>
+            }}>↺ RECOVERY CONTEXT</span>
             {!hasCtx && (
               <span style={{ fontSize: '10px', color: '#cbd5e1', fontStyle: 'italic' }}>
-                — populates during re-evaluation
+                — populates when execution layer throws exception
               </span>
             )}
           </div>
@@ -616,11 +593,20 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
             fontSize: '10px', fontWeight: 700, color: '#94a3b8',
             letterSpacing: '0.07em', textTransform: 'uppercase' as const,
           }}>
-            evaluating
+            enforcing
           </span>
-          <div style={{ marginTop: '3px', display: 'flex', alignItems: 'baseline', gap: '5px', fontFamily: 'ui-monospace, monospace' }}>
+          <div style={{ marginTop: '3px', display: 'flex', alignItems: 'center', gap: '6px', fontFamily: 'ui-monospace, monospace' }}>
             <span style={{ fontSize: '14px', fontWeight: 700, color: '#0f172a' }}>{display?.def.tool ?? '—'}</span>
             <span style={{ fontSize: '12px', color: '#94a3b8' }}>({display?.def.params ?? ''})</span>
+            {isRepeatEvent && (
+              <span style={{
+                fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em',
+                color: '#b45309', background: '#fff7ed', border: '1px solid #fed7aa',
+                borderRadius: '4px', padding: '2px 6px',
+              }}>
+                REPEATED EVENT
+              </span>
+            )}
           </div>
         </div>
 
@@ -725,6 +711,26 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
                     {active.contextNew && <span style={{ color: '#b45309', marginRight: '4px' }}>↺</span>}
                     {active.def.tool}
                   </span>
+                  {active.contextNew && (
+                    <span style={{
+                      marginLeft: '6px',
+                      fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em',
+                      color: '#b45309', background: '#fff7ed', border: '1px solid #fed7aa',
+                      borderRadius: '4px', padding: '1px 6px',
+                    }}>
+                      REPEATED
+                    </span>
+                  )}
+                  {active.verdict && active.def.verdict === 'blocked' && (
+                    <span style={{
+                      marginLeft: '6px',
+                      fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em',
+                      color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca',
+                      borderRadius: '4px', padding: '1px 6px',
+                    }}>
+                      {getBlockedReason(active.def)}
+                    </span>
+                  )}
                   <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#94a3b8', marginLeft: '4px' }}>
                     ({active.def.params})
                   </span>
@@ -732,7 +738,7 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
                     fontSize: '11px', color: '#94a3b8', marginTop: '1px',
                     overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
                   }}>
-                    {active.verdict ? `→ ${active.def.outcome}` : '…evaluating'}
+                    {active.verdict ? `→ ${active.def.outcome}` : '…enforcing'}
                   </div>
                 </div>
                 {active.verdict
@@ -759,6 +765,26 @@ export default function LLMToolGateway({ paused = false }: { paused?: boolean })
                     {call.isReeval && <span style={{ color: '#b45309', marginRight: '4px' }}>↺</span>}
                     {call.tool}
                   </span>
+                  {call.isReeval && (
+                    <span style={{
+                      marginLeft: '6px',
+                      fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em',
+                      color: '#b45309', background: '#fff7ed', border: '1px solid #fed7aa',
+                      borderRadius: '4px', padding: '1px 6px',
+                    }}>
+                      REPEATED
+                    </span>
+                  )}
+                  {call.verdict === 'blocked' && call.blockedReason && (
+                    <span style={{
+                      marginLeft: '6px',
+                      fontSize: '9px', fontWeight: 700, letterSpacing: '0.06em',
+                      color: '#dc2626', background: '#fef2f2', border: '1px solid #fecaca',
+                      borderRadius: '4px', padding: '1px 6px',
+                    }}>
+                      {call.blockedReason}
+                    </span>
+                  )}
                   <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: '11px', color: '#94a3b8', marginLeft: '4px' }}>
                     ({call.params})
                   </span>

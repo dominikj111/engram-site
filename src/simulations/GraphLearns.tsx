@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -170,18 +170,24 @@ function MsgBubble({ msg }: { msg: Msg }) {
 
 // ── Session panel ─────────────────────────────────────────────────────────────
 
+function countConversationMsgs(msgs: Msg[]): number {
+  return msgs.filter(m => m.kind === 'user' || m.kind === 'bot' || m.kind === 'breaking').length
+}
+
 function SessionPanel({
   title,
   accentColor,
   messages,
   isPlaying,
   stats,
+  disabled,
 }: {
   title: string
   accentColor: string
   messages: Msg[]
   isPlaying: boolean
   stats: { questions: number; llmCalls: number; msgCount: number }
+  disabled?: boolean
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -190,7 +196,9 @@ function SessionPanel({
   }, [messages.length])
 
   return (
-    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+    <div style={{
+      flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0,
+    }}>
       <div style={{ marginBottom: '8px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <span style={{ fontSize: '13px', fontWeight: 600, color: accentColor }}>{title}</span>
         <div style={{ display: 'flex', gap: '8px' }}>
@@ -203,6 +211,9 @@ function SessionPanel({
         flex: 1, minHeight: 0,
         background: '#fff', border: `1px solid ${accentColor}40`,
         borderRadius: '10px', display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        opacity: disabled ? 0.3 : 1,
+        transition: 'opacity 0.6s ease',
+        pointerEvents: disabled ? 'none' : undefined,
       }}>
         {/* Bar */}
         <div style={{
@@ -254,18 +265,119 @@ function StatPill({ label, value, color }: { label: string; value: number; color
   )
 }
 
-// ── Slider learning curve ─────────────────────────────────────────────────────
+// ── Live stats panel — driven by actual displayed messages ────────────────────
 
 function lerp(a: number, b: number, t: number) { return a + (b - a) * t }
 
-function LearningCurve({ session, onSessionChange }: { session: number; onSessionChange: (n: number) => void }) {
-  const t = Math.min(1, session / 50)
-  // These match the cold→warm curves for this specific domain
-  const conf     = lerp(0.23, 0.91, Math.pow(t, 0.5))
-  const questions = Math.max(0, Math.round(lerp(3, 0, Math.min(1, t * 3))))
-  const llmCalls  = session < 8 ? 1 : 0
-  const messages  = Math.max(2, Math.round(lerp(11, 2, Math.pow(t, 0.6))))
-  const ms        = Math.round(lerp(8200, 85, Math.pow(t, 0.7)))
+function LiveStats({
+  session1Msgs,
+  session50Msgs,
+  counting,
+}: {
+  session1Msgs: Msg[]
+  session50Msgs: Msg[]
+  counting?: boolean
+}) {
+  // Animate a 0→1 progress during counting phase
+  const [progress, setProgress] = useState(0)
+  const [countingDone, setCountingDone] = useState(false)
+  const frameRef = useRef(0)
+  const startRef = useRef(0)
+  const COUNTING_DURATION = 5000
+
+  useEffect(() => {
+    if (!counting) {
+      cancelAnimationFrame(frameRef.current)
+      // Don't reset progress — keep final value stable
+      return
+    }
+    setCountingDone(false)
+    setProgress(0)
+    startRef.current = performance.now()
+    function tick() {
+      const elapsed = performance.now() - startRef.current
+      const t = Math.min(1, elapsed / COUNTING_DURATION)
+      setProgress(t)
+      if (t < 1) {
+        frameRef.current = requestAnimationFrame(tick)
+      } else {
+        setCountingDone(true)
+      }
+    }
+    frameRef.current = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(frameRef.current)
+  }, [counting])
+
+  // Session 1 final stats (cold graph baseline)
+  const s1Processing = session1Msgs.filter(m => m.kind === 'processing')
+  const s1Conf = s1Processing.length > 0 ? (s1Processing[s1Processing.length - 1].confidence ?? 0) : 0
+  const s1Questions = session1Msgs.filter(m => m.kind === 'breaking').length
+  const s1LlmCalls = session1Msgs.filter(m => m.kind === 'llm-handoff').length
+  const s1MsgCount = countConversationMsgs(session1Msgs)
+  const s1ResponseTime = session1Msgs.reduce((sum, m) => sum + m.delay, 0)
+
+  // Session 50 targets (warm graph)
+  const S50_CONF = 0.91
+  const S50_QUESTIONS = 0
+  const S50_LLM_CALLS = 0
+  const S50_MSG_COUNT = 3
+  const S50_RESPONSE_TIME = 85
+
+  // Determine displayed values
+  let sessionNum: number
+  let conf: number
+  let questions: number
+  let llmCalls: number
+  let msgCount: number
+  let responseTime: number
+  let questionsSaved: number
+  let llmSaved: number
+  let confDelta: string
+  let speedup: string
+
+  if (counting) {
+    // Interpolating from Session 1 → Session 50
+    const t = progress
+    sessionNum = Math.round(lerp(1, 25, t))
+    conf = lerp(s1Conf, S50_CONF, Math.pow(t, 0.5))
+    questions = Math.max(0, Math.round(lerp(s1Questions, S50_QUESTIONS, Math.min(1, t * 2))))
+    llmCalls = t > 0.15 ? 0 : s1LlmCalls
+    msgCount = Math.max(S50_MSG_COUNT, Math.round(lerp(s1MsgCount, S50_MSG_COUNT, Math.pow(t, 0.6))))
+    responseTime = Math.round(lerp(s1ResponseTime, S50_RESPONSE_TIME, Math.pow(t, 0.7)))
+    questionsSaved = s1Questions - questions
+    llmSaved = s1LlmCalls - llmCalls
+    confDelta = `+${(conf - s1Conf).toFixed(2)}`
+    speedup = responseTime > 0 ? `${(s1ResponseTime / responseTime).toFixed(0)}x` : '—'
+  } else if (countingDone || session50Msgs.length > 0) {
+    // Counting finished or Session 50 is playing — show final improvements
+    sessionNum = 25
+    const s50Processing = session50Msgs.filter(m => m.kind === 'processing')
+    conf = s50Processing.length > 0 ? (s50Processing[s50Processing.length - 1].confidence ?? S50_CONF) : S50_CONF
+    questions = session50Msgs.filter(m => m.kind === 'breaking').length
+    llmCalls = session50Msgs.filter(m => m.kind === 'llm-handoff').length
+    msgCount = countConversationMsgs(session50Msgs)
+    responseTime = session50Msgs.length >= 2 ? 85 : 0
+    questionsSaved = s1Questions - questions
+    llmSaved = s1LlmCalls - llmCalls
+    confDelta = `+${(conf - s1Conf).toFixed(2)}`
+    speedup = responseTime > 0 ? `${Math.round(s1ResponseTime / responseTime)}x` : '—'
+  } else {
+    // Session 1 is playing — show accumulating cold graph values
+    sessionNum = 1
+    const processingMsgs = session1Msgs.filter(m => m.kind === 'processing')
+    conf = processingMsgs.length > 0 ? (processingMsgs[processingMsgs.length - 1].confidence ?? 0) : 0
+    questions = session1Msgs.filter(m => m.kind === 'breaking').length
+    llmCalls = session1Msgs.filter(m => m.kind === 'llm-handoff').length
+    msgCount = countConversationMsgs(session1Msgs)
+    responseTime = session1Msgs.reduce((sum, m) => sum + m.delay, 0)
+    questionsSaved = 0
+    llmSaved = 0
+    confDelta = '—'
+    speedup = '—'
+  }
+
+  const isWarm = sessionNum >= 35
+  const accentColor = isWarm ? '#16a34a' : '#7c3aed'
 
   return (
     <div style={{
@@ -273,39 +385,40 @@ function LearningCurve({ session, onSessionChange }: { session: number; onSessio
       background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px',
       padding: '12px 16px',
     }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
         <span style={{ fontSize: '12px', fontWeight: 600, color: '#0f172a' }}>
-          Session {session} — live stats
+          Session {sessionNum} — live stats
         </span>
-        <span style={{ fontSize: '11px', color: '#94a3b8', fontStyle: 'italic' }}>
-          drag the slider to explore the learning curve
+        <span style={{
+          fontSize: '10px', fontWeight: 600,
+          color: accentColor,
+          background: isWarm ? '#f0fdf4' : '#faf5ff',
+          border: `1px solid ${isWarm ? '#bbf7d0' : '#ddd6fe'}`,
+          borderRadius: '4px', padding: '1px 6px',
+          transition: 'all 0.3s ease',
+        }}>
+          {counting ? 'WARMING' : isWarm ? 'WARM GRAPH' : 'COLD GRAPH'}
         </span>
       </div>
 
-      {/* Slider */}
-      <input
-        type="range" min={1} max={50} value={session}
-        onChange={e => onSessionChange(Number(e.target.value))}
-        style={{ width: '100%', marginBottom: '10px', accentColor: '#7c3aed', cursor: 'pointer' }}
-      />
-
-      {/* Stats row */}
       <div style={{ display: 'flex', gap: '0', overflow: 'hidden', border: '1px solid #e2e8f0', borderRadius: '8px' }}>
         {[
-          { label: 'Graph confidence', value: conf.toFixed(2), color: conf > 0.75 ? '#16a34a' : conf > 0.4 ? '#2563eb' : '#7c3aed' },
-          { label: 'Breaking questions', value: String(questions), color: questions === 0 ? '#16a34a' : '#2563eb' },
-          { label: 'LLM calls', value: String(llmCalls), color: llmCalls === 0 ? '#16a34a' : '#7c3aed' },
-          { label: 'Messages exchanged', value: String(messages), color: '#64748b' },
-          { label: 'Response time', value: ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`, color: ms < 200 ? '#16a34a' : ms < 2000 ? '#2563eb' : '#7c3aed' },
+          { label: 'Confidence', value: conf > 0 ? conf.toFixed(2) : '—', color: conf > 0.75 ? '#16a34a' : conf > 0.4 ? '#2563eb' : '#7c3aed' },
+          { label: 'Confidence Δ', value: confDelta, color: confDelta !== '—' ? '#16a34a' : '#94a3b8' },
+          { label: 'Questions saved', value: String(questionsSaved), color: questionsSaved > 0 ? '#16a34a' : '#94a3b8' },
+          { label: 'LLM calls saved', value: String(llmSaved), color: llmSaved > 0 ? '#16a34a' : '#94a3b8' },
+          { label: 'Messages', value: String(msgCount), color: '#64748b' },
+          { label: 'Response time', value: responseTime === 0 ? '—' : responseTime < 1000 ? `${responseTime}ms` : `${(responseTime / 1000).toFixed(1)}s`, color: responseTime > 0 && responseTime < 200 ? '#16a34a' : responseTime < 2000 ? '#2563eb' : '#7c3aed' },
+          { label: 'Speedup', value: speedup, color: speedup !== '—' && speedup !== '1x' ? '#16a34a' : '#94a3b8' },
         ].map((stat, i, arr) => (
           <div key={stat.label} style={{
-            flex: 1, padding: '8px 12px', textAlign: 'center',
+            flex: 1, padding: '8px 10px', textAlign: 'center',
             borderRight: i < arr.length - 1 ? '1px solid #e2e8f0' : undefined,
           }}>
-            <div style={{ fontSize: '18px', fontWeight: 700, color: stat.color, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
+            <div style={{ fontSize: '16px', fontWeight: 700, color: stat.color, fontVariantNumeric: 'tabular-nums', lineHeight: 1 }}>
               {stat.value}
             </div>
-            <div style={{ fontSize: '10px', color: '#94a3b8', marginTop: '3px' }}>{stat.label}</div>
+            <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '3px' }}>{stat.label}</div>
           </div>
         ))}
       </div>
@@ -315,15 +428,32 @@ function LearningCurve({ session, onSessionChange }: { session: number; onSessio
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 
-export default function GraphLearns() {
+type Phase = 'session1' | 'stats' | 'session50' | 'done'
+
+export default function GraphLearns({ paused }: { paused?: boolean }) {
   const [session1Msgs, setSession1Msgs] = useState<Msg[]>([])
   const [session50Msgs, setSession50Msgs] = useState<Msg[]>([])
   const [session1Playing, setSession1Playing] = useState(false)
   const [session50Playing, setSession50Playing] = useState(false)
-  const [sliderSession, setSliderSession] = useState(1)
+  const [phase, setPhase] = useState<Phase>('session1')
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
+  const pausedRef = useRef(paused)
+
+  useEffect(() => { pausedRef.current = paused }, [paused])
 
   function clearAll() { timers.current.forEach(clearTimeout); timers.current = [] }
+
+  const sched = useCallback((delay: number, fn: () => void) => {
+    if (pausedRef.current) {
+      const poll = setInterval(() => {
+        if (!pausedRef.current) { clearInterval(poll); sched(delay, fn) }
+      }, 100)
+      timers.current.push(poll as unknown as ReturnType<typeof setTimeout>)
+      return
+    }
+    const t = setTimeout(fn, delay)
+    timers.current.push(t)
+  }, [])
 
   function scheduleSession(
     msgs: Msg[],
@@ -336,73 +466,55 @@ export default function GraphLearns() {
     let cumulative = startDelay
     msgs.forEach((msg, i) => {
       cumulative += msg.delay
-      const t = setTimeout(() => {
+      sched(cumulative, () => {
         setter(prev => [...prev, msg])
         if (i === msgs.length - 1) {
           setPlaying(false)
           onDone?.()
         }
-      }, cumulative)
-      timers.current.push(t)
+      })
     })
-  }
-
-  function animateSlider(fromSession: number, toSession: number, duration: number) {
-    const steps = 60
-    const stepMs = duration / steps
-    const range = toSession - fromSession
-    for (let i = 0; i <= steps; i++) {
-      const t = setTimeout(() => {
-        setSliderSession(Math.round(fromSession + range * (i / steps)))
-      }, i * stepMs)
-      timers.current.push(t)
-    }
   }
 
   function run() {
-    // Session 1 starts from beginning
-    scheduleSession(SESSION1, setSession1Msgs, setSession1Playing, 400)
-
-    // Session 50 starts a bit later (staggered)
-    scheduleSession(SESSION50, setSession50Msgs, setSession50Playing, 1800, () => {
-      // After session 50 completes, animate slider from 1 to 50
-      animateSlider(1, 50, 3000)
+    // Phase 1: Session 1 plays (cold graph)
+    scheduleSession(SESSION1, setSession1Msgs, setSession1Playing, 400, () => {
+      // Phase 2: Session 1 done → enable live stats, disable both panels
+      sched(400, () => setPhase('stats'))
     })
 
-    // Calculate total duration
+    // After Session 1 finishes + stats transition time, start Session 50
     const s1Duration = SESSION1.reduce((s, m) => s + m.delay, 0) + 400
-    const s50Duration = SESSION50.reduce((s, m) => s + m.delay, 0) + 1800
-    const totalDuration = Math.max(s1Duration, s50Duration) + 3000 + 2500
+    const statsPhaseStart = s1Duration + 400
 
-    const t = setTimeout(() => {
-      clearAll()
-      setSession1Msgs([])
-      setSession50Msgs([])
-      setSession1Playing(false)
-      setSession50Playing(false)
-      setSliderSession(1)
-      const t2 = setTimeout(run, 500)
-      timers.current.push(t2)
-    }, totalDuration + RESET_PAUSE)
-    timers.current.push(t)
+    // Phase 3: After stats counting finishes (5s animation + buffer), start Session 50
+    const s50StartTime = statsPhaseStart + 5500
+    sched(s50StartTime, () => setPhase('session50'))
+    scheduleSession(SESSION50, setSession50Msgs, setSession50Playing, s50StartTime, () => {
+      // Phase 4: Session 50 done → leave session 50 clear, disable rest
+      sched(600, () => setPhase('done'))
+    })
   }
 
   useEffect(() => {
-    const t = setTimeout(run, 400)
-    timers.current.push(t)
+    sched(400, run)
     return clearAll
   }, [])
 
   const s1Stats = {
     questions: session1Msgs.filter(m => m.kind === 'breaking').length,
     llmCalls:  session1Msgs.filter(m => m.kind === 'llm-handoff').length,
-    msgCount:  session1Msgs.length,
+    msgCount:  countConversationMsgs(session1Msgs),
   }
   const s50Stats = {
     questions: session50Msgs.filter(m => m.kind === 'breaking').length,
     llmCalls:  session50Msgs.filter(m => m.kind === 'llm-handoff').length,
-    msgCount:  session50Msgs.length,
+    msgCount:  countConversationMsgs(session50Msgs),
   }
+
+  // Phase-based disabled states — only chat windows fade, not titles/pills
+  const s1Disabled  = phase !== 'session1'
+  const s50Disabled = phase === 'session1' || phase === 'stats'
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', padding: '14px 20px', gap: '10px' }}>
@@ -425,6 +537,7 @@ export default function GraphLearns() {
           messages={session1Msgs}
           isPlaying={session1Playing}
           stats={s1Stats}
+          disabled={s1Disabled}
         />
 
         {/* Divider */}
@@ -445,11 +558,12 @@ export default function GraphLearns() {
           messages={session50Msgs}
           isPlaying={session50Playing}
           stats={s50Stats}
+          disabled={s50Disabled}
         />
       </div>
 
-      {/* Slider learning curve */}
-      <LearningCurve session={sliderSession} onSessionChange={setSliderSession} />
+      {/* Live stats — always visible, shows cumulative improvements */}
+      <LiveStats session1Msgs={session1Msgs} session50Msgs={session50Msgs} counting={phase === 'stats'} />
     </div>
   )
 }
