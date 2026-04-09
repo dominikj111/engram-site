@@ -40,7 +40,7 @@ const WHAT_ENGRAM_IS = [
   {
     requirement: 'Improves from session feedback without retraining',
     llm: 'No — requires new fine-tune',
-    engram: 'Configurable — locked for frozen inference, or real-time edge weight updates when open',
+    engram: 'Yes — learns from every confirmed session. Can be frozen for compliance deployments',
   },
   {
     requirement: 'Stores patterns, never raw content',
@@ -123,7 +123,7 @@ const SIM_INFO: Record<TabId, { body: string }> = {
     body: 'Every query hits the graph first. If a confirmed path exists it resolves in under 100ms — no API call, no token spend. When confidence falls below threshold Engram escalates to the LLM with a structured payload, not a raw thread. Critically: every LLM answer is written back as a new graph path. Watch the cold cache fill up in real time — each LLM call is the last time that query ever needs one.',
   },
   'mcp': {
-    body: 'Two LLM agents share a single Engram graph via MCP. Agent A asks a question Engram can\'t answer, escalates to the LLM, then confirms the result — strengthening the path. Moments later Agent B asks the same question and resolves it directly from the graph. Watch the shared edge weights update in real time and the second agent benefit from knowledge it never generated.',
+    body: 'Two LLM agents share a single Engram graph via MCP. Agent 1 resolves a known path instantly — zero LLM calls. Agent 2 hits an unknown problem, escalates to the LLM, and the confirmed answer is written back as a new graph path. In the next round, Agent 1 reuses that path directly — no duplicate API call, no retraining. Watch the shared edge weights update in real time as agents teach each other through the graph.',
   },
   'gateway': {
     body: 'When an LLM calls Engram via MCP, the only operations available are those explicitly enumerated in the action contract. Permissions, rate limits, and confirmation requirements are enforced before any execution layer call. Watch DropDatabase fail on the first check — the execution pathway doesn\'t exist. Every call is evaluated, every block is logged, and the policy file is the complete audit surface.',
@@ -253,6 +253,63 @@ export default function App() {
           Built for bounded domains where determinism, auditability, and cost control matter:
           LLM agent cost optimisation, CI/CD fault isolation, on-call developer tooling, offline industrial agents.
         </p>
+      </section>
+
+      {/* ── Resource reality ── */}
+      <section style={{ padding: '0 32px 56px' }}>
+        <div style={{
+          display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px',
+        }}>
+          <div style={{
+            background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px',
+            padding: '20px 24px',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '10px',
+            }}>
+              <span style={{ fontSize: '28px', fontWeight: 800, color: '#16a34a', lineHeight: 1 }}>
+                100–500 MB
+              </span>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#16a34a' }}>
+                Engram graph
+              </span>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px', lineHeight: 1.6 }}>
+              A single-language graph covering a bounded domain — CI/CD triage, structured log analysis,
+              payment dispute routing, frontend error classification — fits well within this budget.
+              The vocabulary is finite, the resolution patterns repeat, and every session makes the graph sharper.
+            </p>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: 0, lineHeight: 1.6 }}>
+              Runs on a single CPU core. No GPU, no API key, no network. Microsecond resolution on cached paths.
+            </p>
+          </div>
+          <div style={{
+            background: '#fff', border: '1px solid #e2e8f0', borderRadius: '10px',
+            padding: '20px 24px',
+          }}>
+            <div style={{
+              display: 'flex', alignItems: 'baseline', gap: '8px', marginBottom: '10px',
+            }}>
+              <span style={{ fontSize: '28px', fontWeight: 800, color: '#94a3b8', lineHeight: 1 }}>
+                50–100 GB
+              </span>
+              <span style={{ fontSize: '13px', fontWeight: 600, color: '#94a3b8' }}>
+                LLM weights
+              </span>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 10px', lineHeight: 1.6 }}>
+              LLMs can abstract across domains, process novel source code, and hold deep unstructured
+              conversations — capabilities Engram deliberately does not attempt. They re-reason from
+              scratch on every query and burn tokens on problems they've solved a hundred times before.
+            </p>
+            <p style={{ fontSize: '13px', color: '#334155', margin: 0, lineHeight: 1.6, fontWeight: 500 }}>
+              Engram handles the well-trodden paths. The LLM handles the novel cases — and each one it
+              resolves teaches the graph, so that query never costs tokens again. In agentic sessions,
+              MCP calls are already structured payloads — the protocol speaks Engram's token vocabulary
+              natively, so sub-problem resolution hooks in without any rewording layer.
+            </p>
+          </div>
+        </div>
       </section>
 
       {/* ── What Engram is — comparison table ── */}
@@ -399,7 +456,7 @@ export default function App() {
             </span>
           </div>
           <p style={{ fontSize: '14px', color: '#64748b', margin: 0 }}>
-            Six use cases aligned with Engram's strategic priorities. Each shows a distinct aspect of the design —
+            Five use cases aligned with Engram's strategic priorities. Each shows a distinct aspect of the design —
             select a tab to read the narrative and watch the animated simulation.
           </p>
         </div>
@@ -622,7 +679,7 @@ export default function App() {
           <a href="https://github.com/dominikj111/Engram/blob/main/docs/roadmap.md" target="_blank" rel="noopener noreferrer" style={{ color: '#64748b' }}>
             docs/roadmap.md
           </a>
-          {' '}for all 14 phases and deliverables.
+          {' '}for all 15 phases (Phase 0–14) and deliverables.
         </p>
       </section>
 
