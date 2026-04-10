@@ -37,7 +37,6 @@ const SESSION50: Msg[] = [
   { kind: 'learning',   text: 'timeout → db_config → missing_index', confidence: 0.93,                                    delay: 400  },
 ]
 
-const RESET_PAUSE = 4000
 
 // ── Message bubbles ───────────────────────────────────────────────────────────
 
@@ -319,7 +318,6 @@ function LiveStats({
   // Session 50 targets (warm graph)
   const S50_CONF = 0.91
   const S50_QUESTIONS = 0
-  const S50_LLM_CALLS = 0
   const S50_MSG_COUNT = 3
   const S50_RESPONSE_TIME = 85
 

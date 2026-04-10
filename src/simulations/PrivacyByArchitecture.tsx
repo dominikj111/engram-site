@@ -57,7 +57,6 @@ const SESSIONS: Session[] = [
 ]
 
 const SESSION_GAP    = 2600  // ms between sessions
-const RESET_PAUSE    = 5000  // ms before loop restarts
 
 function concernsForSession(session: Session): ConcernTag[] {
   const tags: ConcernTag[] = []
@@ -168,11 +167,9 @@ function EngramEntry({ session }: { session: Session }) {
 
 function CascadePanel({
   sessions,
-  showGdpr,
   showQuery,
 }: {
   sessions: Session[]
-  showGdpr: boolean
   showQuery: boolean
 }) {
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -323,7 +320,6 @@ function CascadePanel({
 
 export default function PrivacyByArchitecture({ paused }: { paused?: boolean }) {
   const [visibleCount, setVisibleCount] = useState(0)
-  const [showGdpr, setShowGdpr]         = useState(false)
   const [showQuery, setShowQuery]       = useState(false)
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const pausedRef = useRef(paused)
@@ -349,7 +345,6 @@ export default function PrivacyByArchitecture({ paused }: { paused?: boolean }) 
     SESSIONS.forEach((_, i) => {
       sched(800 + i * SESSION_GAP, () => {
         setVisibleCount(i + 1)
-        if (i >= 2) setShowGdpr(true)
       })
     })
 
@@ -380,7 +375,7 @@ export default function PrivacyByArchitecture({ paused }: { paused?: boolean }) 
 
       {/* Unified cascade */}
       <div style={{ flex: 1, minHeight: 0, display: 'flex' }}>
-        <CascadePanel sessions={visible} showGdpr={showGdpr} showQuery={showQuery} />
+        <CascadePanel sessions={visible} showQuery={showQuery} />
       </div>
 
       {/* Key insight */}
