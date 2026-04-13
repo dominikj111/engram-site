@@ -23,7 +23,7 @@ const TABS: { id: TabId; label: string; tagline: string; height: number }[] = [
 
 const WHAT_ENGRAM_IS = [
   {
-    requirement: 'Same input → guaranteed same output',
+    requirement: 'Same input + same graph state → guaranteed same output',
     llm: 'No — stochastic by design',
     engram: 'Yes — deterministic graph traversal',
   },
@@ -88,7 +88,7 @@ const FEATURES = [
   {
     icon: '⚡',
     title: 'Action-first',
-    desc: 'Solution nodes carry typed action contracts. The execution layer is completely separate.',
+    desc: 'Reasoning proposes typed action contracts only. Execution is separate and validates policy before any side effect.',
   },
   {
     icon: '→',
@@ -239,15 +239,21 @@ export default function App() {
           <span style={{ fontWeight: 900, background: 'linear-gradient(135deg, #7c3aed, #2563eb)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Δ</span>Engram
         </h1>
         <p style={{ fontSize: '22px', fontWeight: 500, color: '#334155', margin: '0 0 20px', letterSpacing: '-0.01em', lineHeight: 1.3 }}>
-          A deterministic reasoning kernel — symbolic AI, a finite state machine, with configurable boundaries and self-improving weights.
+          A deterministic reasoning kernel — deterministic semantic reasoning system built on symbolic structure, a finite state machine, with configurable boundaries and self-improving weights.
         </p>
         <p style={{ fontSize: '16px', color: '#64748b', margin: '0 0 16px', lineHeight: 1.65 }}>
           Given a context, Engram navigates a directed graph of concepts, fetches relevant context
           through predefined hooks, and asks targeted{' '}
           <strong style={{ color: '#334155' }}>breaking questions</strong> only when that context is still not enough —
           resolving to a typed <strong style={{ color: '#334155' }}>action contract</strong> at the path terminus.
-          The graph holds the contract, a separate execution layer carries it out.
+          The reasoning engine cannot execute side effects: it only emits contracts.
+          A separate execution layer validates policy and then carries them out.
           Every path is auditable, every weight is named, and the system improves without retraining.
+        </p>
+        <p style={{ fontSize: '16px', color: '#64748b', margin: '0 0 16px', lineHeight: 1.65 }}>
+          Latent nodes are Engram&apos;s representation learning layer: repeated co-activation compresses recurring
+          patterns into reusable concepts. Example: timeout + p95 latency spike + retry burst can converge into
+          an internal concept like upstream saturation and route the next incident faster.
         </p>
         <p style={{ fontSize: '16px', color: '#64748b', margin: 0, lineHeight: 1.65 }}>
           Built for bounded domains where determinism, auditability, and cost control matter:

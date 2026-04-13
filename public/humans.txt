@@ -5,7 +5,7 @@ GitHub: https://github.com/dominikj111
 
 /* PROJECT */
 Name: Engram
-Description: Deterministic reasoning kernel — symbolic AI, a finite state machine, with configurable boundaries and fluid internals
+Description: Deterministic reasoning kernel — deterministic semantic reasoning system built on symbolic structure, a finite state machine, with configurable boundaries and fluid internals
 Repository: https://github.com/dominikj111/Engram
 Site: https://dominikj111.github.io/engram/
 License: Apache 2.0
